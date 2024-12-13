@@ -131,7 +131,7 @@ def scrape_writeup(exp_id, domain):
         #
         # exp_button.click()
 
-        WebDriverWait(driver, 10).until(
+        WebDriverWait(driver, 20).until(
             EC.presence_of_element_located((By.ID, "samplenotebookiframe"))
         )
 
