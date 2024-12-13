@@ -87,8 +87,8 @@ def scrape_writeup(exp_id, domain):
             )
         )
 
-        username_field.send_keys(getenv("USER"))
-        password_field.send_keys(getenv("PASS"))
+        username_field.send_keys(str(dm_user))
+        password_field.send_keys(str(dm_pass))
         login_button.click()
 
         print("Login successful!")
@@ -205,6 +205,8 @@ def main():
     )
     args = parser.parse_args()
     sys_name = args.system_name
+    dm_user = getenv("USER")
+    dm_pass = getenv("PASS")
 
     for cro in proj_names:
         print(f"cro: {cro}")
