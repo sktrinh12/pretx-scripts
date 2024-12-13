@@ -12,6 +12,10 @@ from os import getenv
 import argparse
 
 
+dm_user = getenv("USER")
+dm_pass = getenv("PASS")
+
+
 def save_to_database(sys_name, exp_id, write_up):
     try:
         connection = psycopg2.connect(**DB_CONFIG)
@@ -205,8 +209,6 @@ def main():
     )
     args = parser.parse_args()
     sys_name = args.system_name
-    dm_user = getenv("USER")
-    dm_pass = getenv("PASS")
 
     for cro in proj_names:
         print(f"cro: {cro}")
