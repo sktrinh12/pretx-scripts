@@ -67,8 +67,8 @@ def scrape_writeup(exp_id, domain):
         username_field = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located(
                 (
-                    By.XPATH,
-                    "/html/body/table/tbody/tr/td/div/div/div/form/table/tbody/tr[3]/td/label/input",
+                    By.ID,
+                    "isid",
                 )
             )
         )
@@ -76,8 +76,8 @@ def scrape_writeup(exp_id, domain):
         password_field = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located(
                 (
-                    By.XPATH,
-                    "/html/body/table/tbody/tr/td/div/div/div/form/table/tbody/tr[4]/td/label/input",
+                    By.ID,
+                    "password",
                 )
             )
         )
@@ -85,8 +85,8 @@ def scrape_writeup(exp_id, domain):
         login_button = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located(
                 (
-                    By.XPATH,
-                    "/html/body/table/tbody/tr/td/div/div/div/form/table/tbody/tr[6]/td/input",
+                    By.CSS_SELECTOR,
+                    "input[type='submit'][class='moduleButton']",
                 )
             )
         )
@@ -200,7 +200,9 @@ proj_names = [
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Save ELN write-up to database based on system name")
+    parser = argparse.ArgumentParser(
+        description="Save ELN write-up to database based on system name"
+    )
     parser.add_argument(
         "-n",
         "--system_name",
@@ -224,9 +226,9 @@ def main():
 
         for exp_id in exp_ids:
             scrape_writeup(exp_id, domain)
-            print('-'*42)
+            print("-" * 42)
 
-        print('='*42)
+        print("=" * 42)
 
 
 if __name__ == "__main__":
