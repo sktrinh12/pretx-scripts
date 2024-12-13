@@ -133,30 +133,26 @@ def scrape_writeup(exp_id, domain):
 
         iframe_1 = driver.find_element(By.ID, "samplenotebookiframe")
 
-        driver.switch_to.frame(iframe_1)
-        print("Switched to samplenotebook iframe")
-
-        textarea_div = WebDriverWait(driver, 12).until(
-            EC.presence_of_element_located(
-                (By.XPATH, "//div[@data-customlabel='Textarea']")
-            )
-        )
-
-        # with open('tmp1.html', 'w') as f:
-        #     f.write(driver.page_source)
-
-        span_with_paragraphs = textarea_div.find_element(
-            By.XPATH, ".//span[contains(@class, 'formInputArea2')]"
-        )
-
-        write_up = None
-
         try:
+            driver.switch_to.frame(iframe_1)
+            print("Switched to samplenotebook iframe")
+
+            textarea_div = WebDriverWait(driver, 12).until(
+                EC.presence_of_element_located(
+                    (By.XPATH, "//div[@data-customlabel='Textarea']")
+                )
+            )
+
+            # with open('tmp1.html', 'w') as f:
+            #     f.write(driver.page_source)
+
+            span_with_paragraphs = textarea_div.find_element(
+                By.XPATH, ".//span[contains(@class, 'formInputArea2')]"
+            )
+
+            write_up = None
 
             p_tags = span_with_paragraphs.find_elements(By.TAG_NAME, "p")
-            # for p in p_tags:
-            #     print(p.text)
-
             write_up = " ".join([p.get_attribute("outerHTML") for p in p_tags])
 
         except TimeoutException:
