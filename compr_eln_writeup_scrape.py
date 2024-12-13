@@ -212,6 +212,9 @@ def main():
     args = parser.parse_args()
     sys_name = args.system_name
 
+    if any(value == "" or value is None for value in DB_CONFIG.values()):
+        raise ValueError("One or more required configurations in DB_CONFIG are missing or empty.")
+
     for cro in proj_names:
         print(f"cro: {cro}")
         file_name = file_path_template.format(f"{sys_name}_{cro}")
