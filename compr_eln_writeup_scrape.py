@@ -10,18 +10,20 @@ import traceback
 import psycopg2
 from os import getenv
 import argparse
-
+from datetime import datetime
 
 dm_user = getenv("USER")
 dm_pass = getenv("PASS")
+date_formats = ['%Y-%m-%d', '%m/%d/%Y', '%d-%m-%Y', '%m.%d.%Y', '%Y/%m/%d']
 
-def save_to_database(exp_id, system_name, **kwargs):
+def save_to_database(exp_id, created_date, system_name, **kwargs):
     """
     Save writeup data to the psql db.
 
     Args:
         exp_id (str): The experiment ID.
         system_name (str): The system name.
+        created_date (date): The created date
         **kwargs: Additional tables and writeup data (reactant_table, solvent_table, writeup).
     """
     try:
@@ -32,6 +34,7 @@ def save_to_database(exp_id, system_name, **kwargs):
             """
             CREATE TABLE IF NOT EXISTS ELN_WRITEUP_SCRAPPED (
                 exp_id VARCHAR(7) NOT NULL,
+                created_date DATE,
                 system_name VARCHAR(20) NOT NULL,
                 reactants_table TEXT NOT NULL,
                 solvents_table TEXT NOT NULL,
@@ -54,10 +57,10 @@ def save_to_database(exp_id, system_name, **kwargs):
         table_values = list(kwargs.values())
 
         query = f"""
-            INSERT INTO ELN_WRITEUP_SCRAPPED (exp_id, system_name, {table_columns})
-            VALUES (%s, %s, {table_values_placeholders});
+            INSERT INTO ELN_WRITEUP_SCRAPPED (exp_id, created_date, system_name, {table_columns})
+            VALUES (%s, %s, %s, {table_values_placeholders});
         """
-        cursor.execute(query, [exp_id, system_name] + table_values)
+        cursor.execute(query, [exp_id, created_date, system_name] + table_values)
         connection.commit()
 
     except Exception as e:
@@ -167,8 +170,8 @@ def scrape_writeup(exp_id, domain):
                     (By.XPATH, "//div[@data-customlabel='Textarea']")
                 )
             )
-            with open("tmp_studies_iframe.html", "w") as f:
-                f.write(driver.page_source)
+            # with open("tmp_studies_iframe.html", "w") as f:
+            #     f.write(driver.page_source)
 
         except TimeoutException:
             print(
@@ -176,6 +179,31 @@ def scrape_writeup(exp_id, domain):
             )
             textarea_div = None
 
+        # created date
+        print('searching for created date value...')
+        print('-'*32)
+        date_divs = WebDriverWait(driver, 10).until(
+            EC.presence_of_all_elements_located(
+                (By.XPATH, "//div[@data-customlabel='Textbox']")
+            )
+        )
+        date_value = None
+
+        for date_div in date_divs:
+            input_element = date_div.find_element(By.TAG_NAME, "input")
+            value = input_element.get_attribute("value")
+            
+            print(f'found: {value}')
+            for date_format in date_formats:
+                try:
+                    date_value = datetime.strptime(value, date_format)
+                    break
+                except ValueError:
+                    continue
+
+            if date_value:
+                break
+        
         # chemical tables
         table_dct = {"Reactants": None, "Solvents": None, "Products": None}
         try:
@@ -206,7 +234,7 @@ def scrape_writeup(exp_id, domain):
             print(f"Error extracting writeup element {exp_id}: {e}")
             write_up = None
 
-        save_to_database(exp_id, domain, **table_dct, write_up=write_up)
+        save_to_database(exp_id, date_value, domain, **table_dct, write_up=write_up)
 
     except Exception as e:
         print("Comprehensive Error:")
@@ -224,7 +252,7 @@ DB_CONFIG = {
     "port": getenv("DB_PORT"),
 }
 
-DOMAINS = {"dev": "prelude-dev", "up6": "prelude-upgrade6", "prod": "prelude"}
+DOMAINS = {"dev": "prelude-dev", "up6": "prelude-upgrade6", "prod": "prelude", "clone": "prelude-clone"}
 file_path_template = "exp_ids_eln_writeup_{0}.txt"
 base_url_template = "https://{0}.dotmatics.net/browser"
 path_url_template = (
@@ -270,7 +298,6 @@ def main():
 
         for exp_id in exp_ids:
             scrape_writeup(exp_id, domain)
-            print("-" * 42)
 
         print("=" * 42)
 
