@@ -15,8 +15,15 @@ import argparse
 dm_user = getenv("USER")
 dm_pass = getenv("PASS")
 
+def save_to_database(exp_id, system_name, **kwargs):
+    """
+    Save writeup data to the psql db.
 
-def save_to_database(sys_name, exp_id, write_up):
+    Args:
+        exp_id (str): The experiment ID.
+        system_name (str): The system name.
+        **kwargs: Additional tables and writeup data (reactant_table, solvent_table, writeup).
+    """
     try:
         connection = psycopg2.connect(**DB_CONFIG)
         cursor = connection.cursor()
@@ -26,6 +33,9 @@ def save_to_database(sys_name, exp_id, write_up):
             CREATE TABLE IF NOT EXISTS ELN_WRITEUP_SCRAPPED (
                 exp_id VARCHAR(7) NOT NULL,
                 system_name VARCHAR(20) NOT NULL,
+                reactants_table TEXT NOT NULL,
+                solvents_table TEXT NOT NULL,
+                products_table TEXT NOT NULL,
                 write_up TEXT NOT NULL,
                 PRIMARY KEY(exp_id, system_name)
             );
@@ -33,10 +43,21 @@ def save_to_database(sys_name, exp_id, write_up):
         )
         connection.commit()
 
-        cursor.execute(
-            "INSERT INTO ELN_WRITEUP_SCRAPPED (system_name, exp_id, write_up) VALUES (%s, %s, %s)",
-            (sys_name, exp_id, write_up),
-        )
+        table_columns = ", ".join(
+            [
+                f"{key.lower()}_table"
+                for key in kwargs.keys()
+                if not key.lower().startswith("write")
+            ]
+        ) + ', write_up'
+        table_values_placeholders = ", ".join(["%s"] * len(kwargs))
+        table_values = list(kwargs.values())
+
+        query = f"""
+            INSERT INTO ELN_WRITEUP_SCRAPPED (exp_id, system_name, {table_columns})
+            VALUES (%s, %s, {table_values_placeholders});
+        """
+        cursor.execute(query, [exp_id, system_name] + table_values)
         connection.commit()
 
     except Exception as e:
@@ -91,8 +112,8 @@ def scrape_writeup(exp_id, domain):
             )
         )
 
-        username_field.send_keys(str(dm_user))
-        password_field.send_keys(str(dm_pass))
+        username_field.send_keys(dm_user)
+        password_field.send_keys(dm_pass)
         login_button.click()
 
         print("Login successful!")
@@ -146,28 +167,46 @@ def scrape_writeup(exp_id, domain):
                     (By.XPATH, "//div[@data-customlabel='Textarea']")
                 )
             )
-
-            # with open('tmp1.html', 'w') as f:
-            #     f.write(driver.page_source)
-
-            span_with_paragraphs = textarea_div.find_element(
-                By.XPATH, ".//span[contains(@class, 'formInputArea2')]"
-            )
-
-            write_up = None
-
-            p_tags = span_with_paragraphs.find_elements(By.TAG_NAME, "p")
-            write_up = " ".join([p.get_attribute("outerHTML") for p in p_tags])
+            with open("tmp_studies_iframe.html", "w") as f:
+                f.write(driver.page_source)
 
         except TimeoutException:
             print(
                 f"Timeout waiting for the content inside the iframe; exp id: {exp_id}."
             )
-        finally:
-            driver.switch_to.default_content()
+            textarea_div = None
 
-        if write_up:
-            save_to_database(domain, exp_id, write_up)
+        # chemical tables
+        table_dct = {"Reactants": None, "Solvents": None, "Products": None}
+        try:
+            for label in table_dct.keys():
+                parent_span = driver.find_element(
+                    By.XPATH, f"//span[contains(text(), ' {label} ')]"
+                )
+                parent_div = parent_span.find_element(
+                    By.XPATH,
+                    "following-sibling::div[contains(@class, 'table_scroll_cont')]",
+                )
+                table_dct[label] = parent_div.find_element(
+                    By.TAG_NAME, "table"
+                ).get_attribute("outerHTML")
+        except NoSuchElementException as e:
+            print(f"Error extracting table element for {exp_id} - {label}: {e}")
+            table_dct[label] = None
+
+        # writeup textarea
+        try:
+            writeup_span = textarea_div.find_element(
+                By.XPATH, ".//span[contains(@class, 'formInputArea2')]"
+            )
+            p_tags = writeup_span.find_elements(By.TAG_NAME, "p")
+            write_up = " ".join([p.get_attribute("outerHTML") for p in p_tags])
+
+        except NoSuchElementException as e:
+            print(f"Error extracting writeup element {exp_id}: {e}")
+            write_up = None
+
+        save_to_database(exp_id, domain, **table_dct, write_up=write_up)
 
     except Exception as e:
         print("Comprehensive Error:")
@@ -213,7 +252,9 @@ def main():
     sys_name = args.system_name
 
     if any(value == "" or value is None for value in DB_CONFIG.values()):
-        raise ValueError("One or more required configurations in DB_CONFIG are missing or empty.")
+        raise ValueError(
+            "One or more required configurations in DB_CONFIG are missing or empty."
+        )
 
     for cro in proj_names:
         print(f"cro: {cro}")
