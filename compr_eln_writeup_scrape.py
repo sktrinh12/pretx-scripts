@@ -240,6 +240,11 @@ def scrape_writeup(exp_id, domain):
             print(f"Error extracting writeup element {exp_id}: {e}")
             write_up = None
 
+        if not write_up:
+            div_tags = writeup_span.find_elements(By.TAG_NAME, "div")
+            write_up = " ".join([d.get_attribute("outerHTML") for d in div_tags])
+
+        print("=" * 42)
         save_to_database(exp_id, date_value, domain, **table_dct, write_up=write_up)
 
     except Exception as e:
@@ -279,8 +284,14 @@ def main():
     parser.add_argument(
         "-n",
         "--system_name",
+        required=True,
         choices=DOMAINS.keys(),
         help=f"Specify the system name. Must be one of: {', '.join(DOMAINS.keys())}",
+    )
+    parser.add_argument(
+        "-e",
+        "--exp-id",
+        help=f"Specify relatively short string of experiment ids comma delimited",
     )
     args = parser.parse_args()
     sys_name = args.system_name
@@ -294,22 +305,26 @@ def main():
         raise ValueError('DM user and/or pass not set')
 
     base_path = path.join(getcwd(), "exp_ids")
-    for cro in proj_names:
-        print(f"cro: {cro}")
-        file_name = file_path_template.format(f"{sys_name}_{cro}")
-        print(f"file_name: {file_name}")
-        exp_ids = []
-        with open(path.join(base_path, file_name), "r") as file:
-            for line in file:
-                exp_ids.extend(line.strip().split(","))
+    exp_ids = []
 
-        print(exp_ids)
-        domain = DOMAINS[sys_name]
+    if args.exp_id:
+        arg_exp_ids = args.exp_id.strip()
+        exp_ids = [eid.strip() for eid in arg_exp_ids.split(",") if eid.strip()]
+    else:
+        for cro in proj_names:
+            print(f"cro: {cro}")
+            file_name = file_path_template.format(f"{sys_name}_{cro}")
+            print(f"file_name: {file_name}")
+            with open(path.join(base_path, file_name), "r") as file:
+                for line in file:
+                    exp_ids.extend(line.strip().split(","))
 
-        for exp_id in exp_ids:
-            scrape_writeup(exp_id, domain)
+    print(exp_ids)
+    domain = DOMAINS[sys_name]
 
-        print("=" * 42)
+    for exp_id in exp_ids:
+        scrape_writeup(exp_id, domain)
+
 
 
 if __name__ == "__main__":
