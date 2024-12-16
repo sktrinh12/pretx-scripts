@@ -14,7 +14,7 @@ from datetime import datetime
 
 dm_user = getenv("USER")
 dm_pass = getenv("PASS")
-date_formats = ['%Y-%m-%d', '%m/%d/%Y', '%d-%m-%Y', '%m.%d.%Y', '%Y/%m/%d']
+date_formats = ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y']
 
 def save_to_database(exp_id, created_date, system_name, **kwargs):
     """
@@ -180,29 +180,35 @@ def scrape_writeup(exp_id, domain):
             textarea_div = None
 
         # created date
-        print('searching for created date value...')
-        print('-'*32)
-        date_divs = WebDriverWait(driver, 10).until(
-            EC.presence_of_all_elements_located(
-                (By.XPATH, "//div[@data-customlabel='Textbox']")
+        date_div = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located(
+                (By.XPATH, "//div[@data-customlabel='Date']")
             )
         )
+
+        date_table = date_div.find_element(By.XPATH, "./table")
+        date_text = None
+        try:
+            date_tbody_span = date_table.find_element(By.XPATH, "./tbody//span")
+            date_text = date_tbody_span.text.strip()
+        except Exception:
+            pass
+
+        if not date_text:
+            try:
+                date_tbody_div = date_table.find_element(By.XPATH, "./tbody//div")
+                date_text = date_tbody_div.text.strip()
+            except Exception:
+                pass 
+
+        print(f'date: {date_text}')
         date_value = None
-
-        for date_div in date_divs:
-            input_element = date_div.find_element(By.TAG_NAME, "input")
-            value = input_element.get_attribute("value")
-            
-            print(f'found: {value}')
-            for date_format in date_formats:
-                try:
-                    date_value = datetime.strptime(value, date_format)
-                    break
-                except ValueError:
-                    continue
-
-            if date_value:
+        for date_format in date_formats:
+            try:
+                date_value = datetime.strptime(date_text, date_format)
                 break
+            except ValueError:
+                continue
         
         # chemical tables
         table_dct = {"Reactants": None, "Solvents": None, "Products": None}
@@ -213,7 +219,7 @@ def scrape_writeup(exp_id, domain):
                 )
                 parent_div = parent_span.find_element(
                     By.XPATH,
-                    "following-sibling::div[contains(@class, 'table_scroll_cont')]",
+                    "following-sibling::div[@data-customlabel='Table']",
                 )
                 table_dct[label] = parent_div.find_element(
                     By.TAG_NAME, "table"
@@ -283,6 +289,9 @@ def main():
         raise ValueError(
             "One or more required configurations in DB_CONFIG are missing or empty."
         )
+
+    if not dm_user or not dm_pass:
+        raise ValueError('DM user and/or pass not set')
 
     for cro in proj_names:
         print(f"cro: {cro}")
