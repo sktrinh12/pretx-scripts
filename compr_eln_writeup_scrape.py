@@ -259,7 +259,7 @@ DB_CONFIG = {
 }
 
 DOMAINS = {"dev": "prelude-dev", "up6": "prelude-upgrade6", "prod": "prelude", "clone": "prelude-clone"}
-file_path_template = "exp_ids_eln_writeup_{0}.txt"
+file_path_template = "exp_ids/exp_ids_eln_writeup_{0}.txt"
 base_url_template = "https://{0}.dotmatics.net/browser"
 path_url_template = (
     "/testmanager/experiment.jsp?experiment_id={0}&action=edit&tab=notebook"
