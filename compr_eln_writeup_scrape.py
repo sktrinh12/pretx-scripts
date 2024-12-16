@@ -8,7 +8,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import traceback
 import psycopg2
-from os import getenv, path
+from os import getenv, path, getcwd
 import argparse
 from datetime import datetime
 
@@ -293,12 +293,13 @@ def main():
     if not dm_user or not dm_pass:
         raise ValueError('DM user and/or pass not set')
 
+    base_path = path.join(getcwd(), "exp_ids")
     for cro in proj_names:
         print(f"cro: {cro}")
         file_name = file_path_template.format(f"{sys_name}_{cro}")
         print(f"file_name: {file_name}")
         exp_ids = []
-        with open(path.join("exp_ids", file_name), "r") as file:
+        with open(path.join(base_path, file_name), "r") as file:
             for line in file:
                 exp_ids.extend(line.strip().split(","))
 
