@@ -11,9 +11,12 @@ import psycopg2
 from os import getenv, path, getcwd
 import argparse
 from datetime import datetime
+from dotenv import load_dotenv
 
-dm_user = getenv("USER")
-dm_pass = getenv("PASS")
+
+load_dotenv()
+dm_user = getenv("DM_USER")
+dm_pass = getenv("DM_PASS")
 date_formats = ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y']
 
 def save_to_database(exp_id, created_date, system_name, **kwargs):
@@ -73,6 +76,13 @@ def save_to_database(exp_id, created_date, system_name, **kwargs):
 
 
 def scrape_writeup(exp_id, domain):
+    """
+    Scrape html text from DM website.
+
+    Args:
+        exp_id (str): The experiment ID.
+        domain (str): The system name or domain.
+    """
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--disable-gpu")
