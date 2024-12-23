@@ -4,3 +4,5 @@ tmp*
 tests
 insert_statements.sql
 bi_nuc_upload_sql.ipynb
+format_abcellera_data.ipynb
+upload_abcellera.py
