@@ -4,6 +4,8 @@ if [[ $# -ne 1 ]]; then
   echo "Usage: $0 <input_file>"
   exit 1
 fi
+# how to use: ./append_sort_exp_ids.sh xtra.prod.ChemELN.txt
+# where xtra.prod.ChemELN.txt is the filename of the 25 additionally added exp_ids
 
 PARENT_DIR="./exp_ids"
 
