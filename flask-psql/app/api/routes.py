@@ -1,15 +1,30 @@
 from flask import request, jsonify
 from app.api import bp
-from app.models import get_or_create_table
+from app.functions import get_or_create_table
 from sqlalchemy.exc import SQLAlchemyError
 from app import db
 
 
+@bp.route('/get-data', methods=['GET'])
+def get_data():
+    """Get rows from validity table"""
+    user_name = request.args.get('user_name')
+    if not user_name:
+        return jsonify({'status': 'error', 'message': 'user_name parameter is required'}), 400
+    try:
+        table = get_or_create_table(user_name, create=False)
+        stmt = table.select()
+        result = db.session.execute(stmt).fetchall()
+        rows = [{'exp_id': row.exp_id, 'valid': row.valid, 'invalid': row.invalid} for row in result]
+        return jsonify({'data': rows}), 200
+
+    except SQLAlchemyError as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 @bp.route('/update-data', methods=['POST'])
 def update_data():
-    """Update rows from the 'validity' table."""
+    """Update rows from the validity table."""
     user_name = request.args.get('user_name')
     if not user_name:
         return jsonify({'status': 'error', 'message': 'user_name parameter is required'}), 400
