@@ -243,12 +243,18 @@ def scrape_writeup(exp_id, domain):
             writeup_span = textarea_div.find_element(
                 By.XPATH, ".//span[contains(@class, 'formInputArea2')]"
             )
+        except NoSuchElementException:
+            try:
+                writeup_span = textarea_div.find_element(By.XPATH, ".//*[@data-type='writeup']")
+            except NoSuchElementException as e:
+                write_up = None
+                print(f"Error extracting writeup element {exp_id}: {e}")
+            else:
+                all_tags = writeup_span.find_elements(By.XPATH, ".//*")
+                write_up = " ".join([tag.get_attribute("outerHTML") for tag in all_tags])
+        else:
             all_tags = writeup_span.find_elements(By.XPATH, ".//*")
             write_up = " ".join([tag.get_attribute("outerHTML") for tag in all_tags])
-
-        except NoSuchElementException as e:
-            print(f"Error extracting writeup element {exp_id}: {e}")
-            write_up = None
 
         print("=" * 42)
         save_to_database(exp_id, date_value, domain, **table_dct, write_up=write_up)
