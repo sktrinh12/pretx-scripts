@@ -14,7 +14,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 
 
-load_dotenv()
+load_dotenv(override=True)
 dm_user = getenv("DM_USER")
 dm_pass = getenv("DM_PASS")
 date_formats = ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y']
