@@ -1,0 +1,8 @@
+python-dotenv
+psycopg2-binary
+asyncpg
+aiohttp
+pandas
+transformers
+scikit-learn
+torch --index-url https://download.pytorch.org/whl/cpu
