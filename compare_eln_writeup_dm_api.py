@@ -16,13 +16,17 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 
 load_dotenv(override=True)
-DM_USER = getenv('DM_USER')
-DM_PASS = quote(getenv('DM_PASS'))
-SYS_NAMES = ["prelude", "prelude-masks"] 
-DS_IDS = {'prelude': {'exp_ids': 1425, 'summary': 1426}, 'prelude-masks' : {'exp_ids': 1422, 'summary': 1423}}
-BASE_URL = 'dotmatics.net/browser/api'
-PROJECT_ID = 100000
-EXPIRE = 600 #5*60*60
+DM_USER = getenv("DM_USER")
+DM_PASS = quote(getenv("DM_PASS"))
+DM_PASS_ALT = quote(getenv("DM_PASS_ALT"))
+SYS_NAMES = ["prelude", "prelude-masks", "prelude-prod-sdpo-8251"]
+DS_IDS = {
+    "prelude": {"proj_id": 100000, "exp_ids": 1425, "summary": 1426},
+    "prelude-masks": {"proj_id": 100000, "exp_ids": 1422, "summary": 1423},
+    "prelude-prod-sdpo-8251": {"proj_id": 98000, "exp_ids": 1403, "summary": 1404},
+}
+BASE_URL = "dotmatics.net/browser/api"
+EXPIRE = 600  # 5*60*60
 DB_POOL = None
 DB_CONFIG = {
     "dbname": getenv("DB_NAME"),
@@ -35,6 +39,7 @@ MODEL_NAME = "allenai/scibert_scivocab_uncased"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModel.from_pretrained(MODEL_NAME)
 
+
 async def init_db(max_size: int):
     """
     Initializes the database connection pool.
@@ -43,14 +48,15 @@ async def init_db(max_size: int):
     """
     global DB_POOL
     DB_POOL = await asyncpg.create_pool(
-        user=DB_CONFIG['user'],
-        password=DB_CONFIG['password'],
-        database=DB_CONFIG['dbname'],
-        host=DB_CONFIG['host'],
-        port=DB_CONFIG['port'],
+        user=DB_CONFIG["user"],
+        password=DB_CONFIG["password"],
+        database=DB_CONFIG["dbname"],
+        host=DB_CONFIG["host"],
+        port=DB_CONFIG["port"],
         min_size=1,
-        max_size=max_size
+        max_size=max_size,
     )
+
 
 def create_tables(delete=False):
     """
@@ -67,7 +73,7 @@ def create_tables(delete=False):
             """
             CREATE TABLE IF NOT EXISTS ELN_WRITEUP_API_EXTRACT (
                 exp_id VARCHAR(7) NOT NULL,
-                system_name VARCHAR(20) NOT NULL,
+                system_name VARCHAR(100) NOT NULL,
                 write_up TEXT NOT NULL,
                 summary_data TEXT NOT NULL,
                 PRIMARY KEY(exp_id, system_name)
@@ -108,7 +114,7 @@ async def fetch(url, headers):
         async with session.get(url, headers=headers) as response:
             return await response.json()
 
-            
+
 async def save_writeup_to_db(exp_id, system_name, writeup, summary):
     """
     Saves writeup data to the database.
@@ -125,11 +131,23 @@ async def save_writeup_to_db(exp_id, system_name, writeup, summary):
             INSERT INTO ELN_WRITEUP_API_EXTRACT (exp_id, system_name, write_up, summary_data)
             VALUES ($1, $2, $3, $4)
             """,
-            exp_id, system_name, writeup, summary
+            exp_id,
+            system_name,
+            writeup,
+            summary,
         )
 
 
-async def save_compr_to_db(exp_id, system_name_1, system_name_2, diff, match_percentage, is_match, scibert_score, tfidf_score):
+async def save_compr_to_db(
+    exp_id,
+    system_name_1,
+    system_name_2,
+    diff,
+    match_percentage,
+    is_match,
+    scibert_score,
+    tfidf_score,
+):
     """
     Saves comparison data to the database.
 
@@ -149,7 +167,14 @@ async def save_compr_to_db(exp_id, system_name_1, system_name_2, diff, match_per
             INSERT INTO ELN_WRITEUP_COMPARISON (exp_id, system_name_1, system_name_2, diff, match_percentage, is_match, scibert_score, tfidf_score)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             """,
-            exp_id, system_name_1, system_name_2, diff, match_percentage, is_match, scibert_score, tfidf_score
+            exp_id,
+            system_name_1,
+            system_name_2,
+            diff,
+            match_percentage,
+            is_match,
+            scibert_score,
+            tfidf_score,
         )
 
 
@@ -157,7 +182,9 @@ def get_embedding(text):
     """
     Generate embedding for a given text using SciBERT.
     """
-    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
+    inputs = tokenizer(
+        text, return_tensors="pt", truncation=True, padding=True, max_length=512
+    )
     with torch.no_grad():
         outputs = model(**inputs)
         embedding = outputs.last_hidden_state[:, 0, :]  # CLS token embedding
@@ -204,26 +231,27 @@ async def process_exp_id(exp_id, token_dct):
         token_dct (dict): Dictionary of tokens for authentication.
     """
     compr_data = {}
-    for sname in SYS_NAMES:
+    # exclude prod for this first test 2025-24-01
+    for sname in SYS_NAMES[1:]:
         writeup_url_endpoint = f"https://{sname}.{BASE_URL}/studies/experiment/{exp_id}/writeup/{{includeHtml}}"
         headers = {"Authorization": f"Dotmatics {token_dct[sname]}"}
         writeup_data = await fetch(writeup_url_endpoint, headers)
-        compr_data[sname] = {'writeup': writeup_data}
+        compr_data[sname] = {"writeup": writeup_data}
 
-        dsid_string = "{0}_PROTOCOL,{0}_PROTOCOL_ID,{0}_ISID,{0}_CREATED_DATE".format(DS_IDS[sname]['summary'])
-        exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/100000/{dsid_string}/{exp_id}"
+        dsid_string = "{0}_PROTOCOL,{0}_PROTOCOL_ID,{0}_ISID,{0}_CREATED_DATE".format(
+            DS_IDS[sname]["summary"]
+        )
+        exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/{DS_IDS[sname]['proj_id']}/{dsid_string}/{exp_id}"
         summary_data = await fetch(exp_summary_endpoint, headers)
-        compr_data[sname]['summary'] = json.dumps(summary_data)
+        compr_data[sname]["summary"] = json.dumps(summary_data)
 
         await save_writeup_to_db(exp_id, sname, writeup_data, json.dumps(summary_data))
 
-    writeup1 = compr_data[SYS_NAMES[0]]['writeup']
-    writeup2 = compr_data[SYS_NAMES[1]]['writeup']
-    diff = "\n".join(unified_diff(
-        writeup1.splitlines(),
-        writeup2.splitlines(),
-        lineterm=''
-    ))
+    writeup1 = compr_data[SYS_NAMES[1]]["writeup"]
+    writeup2 = compr_data[SYS_NAMES[2]]["writeup"]
+    diff = "\n".join(
+        unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
+    )
     matcher = SequenceMatcher(None, writeup1, writeup2)
     match_percentage = matcher.ratio() * 100
     is_match = match_percentage >= 95
@@ -231,7 +259,16 @@ async def process_exp_id(exp_id, token_dct):
     scibert_score = float(scibert_compare(writeup1, writeup2))
     tfidf_score = float(tfidf_compare(writeup1, writeup2))
 
-    await save_compr_to_db(exp_id, SYS_NAMES[0], SYS_NAMES[1], diff, match_percentage, is_match, scibert_score, tfidf_score)
+    await save_compr_to_db(
+        exp_id,
+        SYS_NAMES[1],
+        SYS_NAMES[2],
+        diff,
+        match_percentage,
+        is_match,
+        scibert_score,
+        tfidf_score,
+    )
 
 
 async def main(limit: int, max_size: int):
@@ -241,20 +278,22 @@ async def main(limit: int, max_size: int):
 
     Args:
         limit (int): Limit the number of experiment ids fetched
-        max_size (int): Max number of connections in the pool 
+        max_size (int): Max number of connections in the pool
     """
     await init_db(max_size)
     tasks = []
-    # get the prelude-masks domain exp ids
+    # get the prod-sdpo-8251 domain exp ids bc from 2024-AUG
+    # has only subset of exp ids from prod
     DOMAIN = SYS_NAMES[1]
     async with aiohttp.ClientSession() as session:
         token_dct = {}
-        for sname in SYS_NAMES:
-            token_endpoint = f'https://{sname}.{BASE_URL}/authenticate/requestToken?isid={DM_USER}&password={DM_PASS}&expiration={EXPIRE}'
+        # exclude prod for this first test 2025-24-01
+        for sname in SYS_NAMES[1:]:
+            token_endpoint = f"https://{sname}.{BASE_URL}/authenticate/requestToken?isid={DM_USER}&password={DM_PASS_ALT if sname.endswith('8251') else DM_PASS}&expiration={EXPIRE}"
             token_dct[sname] = await fetch(token_endpoint, {})
         print("Tokens fetched successfully.")
 
-        exp_id_query_endpoint = f"query/{DM_USER}/{PROJECT_ID}/{DS_IDS[DOMAIN]['exp_ids']}/EXPERIMENT_ID/greaterthan/1?limit={limit}"
+        exp_id_query_endpoint = f"query/{DM_USER}/{DS_IDS[DOMAIN]['proj_id']}/{DS_IDS[DOMAIN]['exp_ids']}/EXPERIMENT_ID/greaterthan/1?limit={limit}"
         url = f"https://{DOMAIN}.{BASE_URL}/{exp_id_query_endpoint}"
         headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
         print(f"Fetching experiment IDs from: {url}")
@@ -274,7 +313,7 @@ async def main(limit: int, max_size: int):
     print("Database connection pool closed")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Call Dotmatics API to fetch writeup text and analyse for similarity"
     )
@@ -293,7 +332,7 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         "-m",
-        "--max",
+        "--max_size",
         default=10,
         type=int,
         help=f"Specify the max number of connections for db connection pool; must be integer number.",
