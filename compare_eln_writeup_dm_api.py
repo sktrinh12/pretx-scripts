@@ -26,7 +26,7 @@ DS_IDS = {
     "prelude-prod-sdpo-8251": {"proj_id": 98000, "exp_ids": 1403, "summary": 1404},
 }
 BASE_URL = "dotmatics.net/browser/api"
-EXPIRE = 200 #1.5*60*60
+EXPIRE = 1.5*60*60
 DB_POOL = None
 DB_CONFIG = {
     "dbname": getenv("DB_NAME"),
