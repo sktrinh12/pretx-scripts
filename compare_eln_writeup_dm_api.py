@@ -39,7 +39,6 @@ MODEL_NAME = "allenai/scibert_scivocab_uncased"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModel.from_pretrained(MODEL_NAME)
 
-
 async def init_db(max_size: int):
     """
     Initializes the database connection pool.
@@ -221,7 +220,7 @@ def tfidf_compare(text1, text2):
     return similarity[0][0]
 
 
-async def process_exp_id(exp_id, token_dct):
+async def process_exp_id(exp_id, token_dct, semaphore):
     """
     Processes an individual experiment ID by fetching data, computing differences,
     and saving to the database.
@@ -230,48 +229,49 @@ async def process_exp_id(exp_id, token_dct):
         exp_id (str): The experiment ID.
         token_dct (dict): Dictionary of tokens for authentication.
     """
-    compr_data = {}
-    # exclude prod for this first test 2025-24-01
-    for sname in SYS_NAMES[1:]:
-        writeup_url_endpoint = f"https://{sname}.{BASE_URL}/studies/experiment/{exp_id}/writeup/{{includeHtml}}"
-        headers = {"Authorization": f"Dotmatics {token_dct[sname]}"}
-        writeup_data = await fetch(writeup_url_endpoint, headers)
-        compr_data[sname] = {"writeup": writeup_data}
+    async with semaphore:
+        compr_data = {}
+        # exclude prod for this first test 2025-24-01
+        for sname in SYS_NAMES[1:]:
+            writeup_url_endpoint = f"https://{sname}.{BASE_URL}/studies/experiment/{exp_id}/writeup/{{includeHtml}}"
+            headers = {"Authorization": f"Dotmatics {token_dct[sname]}"}
+            writeup_data = await fetch(writeup_url_endpoint, headers)
+            compr_data[sname] = {"writeup": writeup_data}
 
-        dsid_string = "{0}_PROTOCOL,{0}_PROTOCOL_ID,{0}_ISID,{0}_CREATED_DATE".format(
-            DS_IDS[sname]["summary"]
+            dsid_string = "{0}_PROTOCOL,{0}_PROTOCOL_ID,{0}_ISID,{0}_CREATED_DATE".format(
+                DS_IDS[sname]["summary"]
+            )
+            exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/{DS_IDS[sname]['proj_id']}/{dsid_string}/{exp_id}"
+            summary_data = await fetch(exp_summary_endpoint, headers)
+            compr_data[sname]["summary"] = json.dumps(summary_data)
+
+            await save_writeup_to_db(exp_id, sname, writeup_data, json.dumps(summary_data))
+
+        writeup1 = compr_data[SYS_NAMES[1]]["writeup"]
+        writeup2 = compr_data[SYS_NAMES[2]]["writeup"]
+        diff = "\n".join(
+            unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
         )
-        exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/{DS_IDS[sname]['proj_id']}/{dsid_string}/{exp_id}"
-        summary_data = await fetch(exp_summary_endpoint, headers)
-        compr_data[sname]["summary"] = json.dumps(summary_data)
+        matcher = SequenceMatcher(None, writeup1, writeup2)
+        match_percentage = matcher.ratio() * 100
+        is_match = match_percentage >= 95
 
-        await save_writeup_to_db(exp_id, sname, writeup_data, json.dumps(summary_data))
+        scibert_score = float(scibert_compare(writeup1, writeup2))
+        tfidf_score = float(tfidf_compare(writeup1, writeup2))
 
-    writeup1 = compr_data[SYS_NAMES[1]]["writeup"]
-    writeup2 = compr_data[SYS_NAMES[2]]["writeup"]
-    diff = "\n".join(
-        unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
-    )
-    matcher = SequenceMatcher(None, writeup1, writeup2)
-    match_percentage = matcher.ratio() * 100
-    is_match = match_percentage >= 95
-
-    scibert_score = float(scibert_compare(writeup1, writeup2))
-    tfidf_score = float(tfidf_compare(writeup1, writeup2))
-
-    await save_compr_to_db(
-        exp_id,
-        SYS_NAMES[1],
-        SYS_NAMES[2],
-        diff,
-        match_percentage,
-        is_match,
-        scibert_score,
-        tfidf_score,
-    )
+        await save_compr_to_db(
+            exp_id,
+            SYS_NAMES[1],
+            SYS_NAMES[2],
+            diff,
+            match_percentage,
+            is_match,
+            scibert_score,
+            tfidf_score,
+        )
 
 
-async def main(limit: int, max_size: int):
+async def main(limit: int, max_size: int, cnt_semaphore: int):
     """
     Main function to handle the asynchronous logic for fetching, comparing,
     and saving data.
@@ -281,6 +281,7 @@ async def main(limit: int, max_size: int):
         max_size (int): Max number of connections in the pool
     """
     await init_db(max_size)
+    semaphore = asyncio.Semaphore(cnt_semaphore)
     tasks = []
     # get the prod-sdpo-8251 domain exp ids bc from 2024-AUG
     # has only subset of exp ids from prod
@@ -303,7 +304,7 @@ async def main(limit: int, max_size: int):
         print(f"Found {len(exp_id_list)} experiment IDs to process.")
         for i, exp_id in enumerate(list(rev_exp_id_list)):
             print(f"Queuing task for exp_id: {exp_id} ({i + 1}/{len(exp_id_list)})")
-            tasks.append(process_exp_id(exp_id, token_dct))
+            tasks.append(process_exp_id(exp_id, token_dct, semaphore))
 
         print("Asyncio processing all experiment IDs...")
         await asyncio.gather(*tasks)
@@ -337,8 +338,15 @@ if __name__ == "__main__":
         type=int,
         help=f"Specify the max number of connections for db connection pool; must be integer number.",
     )
+    parser.add_argument(
+        "-s",
+        "--semaphore",
+        default=25,
+        type=int,
+        help=f"Specify the max number of semaphore connections; must be integer number.",
+    )
     args = parser.parse_args()
     limit = args.limit
     create_tables(delete=args.delete)
     if not args.delete:
-        asyncio.run(main(limit, int(args.max_size)))
+        asyncio.run(main(limit, int(args.max_size), int(args.semaphore)))
