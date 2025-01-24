@@ -26,7 +26,7 @@ DS_IDS = {
     "prelude-prod-sdpo-8251": {"proj_id": 98000, "exp_ids": 1403, "summary": 1404},
 }
 BASE_URL = "dotmatics.net/browser/api"
-EXPIRE = 600  # 5*60*60
+EXPIRE = 200 #1.5*60*60
 DB_POOL = None
 DB_CONFIG = {
     "dbname": getenv("DB_NAME"),
@@ -271,7 +271,7 @@ async def process_exp_id(exp_id, token_dct, semaphore):
         )
 
 
-async def main(limit: int, max_size: int, cnt_semaphore: int):
+async def main(limit: int, max_size: int, cardinal: int):
     """
     Main function to handle the asynchronous logic for fetching, comparing,
     and saving data.
@@ -281,34 +281,39 @@ async def main(limit: int, max_size: int, cnt_semaphore: int):
         max_size (int): Max number of connections in the pool
     """
     await init_db(max_size)
-    semaphore = asyncio.Semaphore(cnt_semaphore)
+    semaphore = asyncio.Semaphore(cardinal)
+    chunk_size = cardinal
     tasks = []
     # get the prod-sdpo-8251 domain exp ids bc from 2024-AUG
     # has only subset of exp ids from prod
-    DOMAIN = SYS_NAMES[1]
-    async with aiohttp.ClientSession() as session:
-        token_dct = {}
-        # exclude prod for this first test 2025-24-01
-        for sname in SYS_NAMES[1:]:
-            token_endpoint = f"https://{sname}.{BASE_URL}/authenticate/requestToken?isid={DM_USER}&password={DM_PASS_ALT if sname.endswith('8251') else DM_PASS}&expiration={EXPIRE}"
-            token_dct[sname] = await fetch(token_endpoint, {})
-        print("Tokens fetched successfully.")
+    DOMAIN = SYS_NAMES[2]
+    token_dct = {}
+    # exclude prod for this first test 2025-24-01
+    for sname in SYS_NAMES[1:]:
+        token_endpoint = f"https://{sname}.{BASE_URL}/authenticate/requestToken?isid={DM_USER}&password={DM_PASS_ALT if sname.endswith('8251') else DM_PASS}&expiration={EXPIRE}"
+        token_dct[sname] = await fetch(token_endpoint, {})
+    print("Tokens fetched successfully.")
 
-        exp_id_query_endpoint = f"query/{DM_USER}/{DS_IDS[DOMAIN]['proj_id']}/{DS_IDS[DOMAIN]['exp_ids']}/EXPERIMENT_ID/greaterthan/1?limit={limit}"
-        url = f"https://{DOMAIN}.{BASE_URL}/{exp_id_query_endpoint}"
-        headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
-        print(f"Fetching experiment IDs from: {url}")
-        exp_id_list = (await fetch(url, headers))["ids"]
-        rev_exp_id_list = reversed(exp_id_list)
+    exp_id_query_endpoint = f"query/{DM_USER}/{DS_IDS[DOMAIN]['proj_id']}/{DS_IDS[DOMAIN]['exp_ids']}/EXPERIMENT_ID/greaterthan/1?limit={limit}"
+    url = f"https://{DOMAIN}.{BASE_URL}/{exp_id_query_endpoint}"
+    headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
+    print(f"Fetching experiment IDs from: {url}")
+    exp_id_list = await fetch(url, headers)
+    rev_exp_id_list = list(reversed(exp_id_list["ids"]))
 
-        print(f"Found {len(exp_id_list)} experiment IDs to process.")
-        for i, exp_id in enumerate(list(rev_exp_id_list)):
-            print(f"Queuing task for exp_id: {exp_id} ({i + 1}/{len(exp_id_list)})")
+    print(f"Found {len(rev_exp_id_list)} experiment IDs to process.")
+    print()
+    input("Press any key to continue...")
+    for i in range(0, len(rev_exp_id_list), chunk_size):
+        chunk = rev_exp_id_list[i:i+chunk_size]
+        for exp_id in chunk:
+            print(f"Queuing task for exp_id: {exp_id} ({i + 1}/{len(rev_exp_id_list)})")
             tasks.append(process_exp_id(exp_id, token_dct, semaphore))
 
         print("Asyncio processing all experiment IDs...")
         await asyncio.gather(*tasks)
         print("All Asyncio tasks completed")
+        tasks.clear() 
 
     await DB_POOL.close()
     print("Database connection pool closed")
