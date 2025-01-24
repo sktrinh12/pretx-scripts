@@ -26,7 +26,7 @@ DS_IDS = {
     "prelude-prod-sdpo-8251": {"proj_id": 98000, "exp_ids": 1403, "summary": 1404},
 }
 BASE_URL = "dotmatics.net/browser/api"
-EXPIRE = 1.5*60*60
+EXPIRE = 1*60*60
 DB_POOL = None
 DB_CONFIG = {
     "dbname": getenv("DB_NAME"),
@@ -299,6 +299,7 @@ async def main(limit: int, max_size: int, cardinal: int):
     headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
     print(f"Fetching experiment IDs from: {url}")
     exp_id_list = await fetch(url, headers)
+    print(exp_id_list)
     rev_exp_id_list = list(reversed(exp_id_list["ids"]))
 
     print(f"Found {len(rev_exp_id_list)} experiment IDs to process.")
