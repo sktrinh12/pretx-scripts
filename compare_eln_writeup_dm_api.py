@@ -1,3 +1,22 @@
+"""
+The script automates the process of fetching experimental IDs from a Dotmatics API, processes them asynchronously, and performs comparisons between experiment write-ups using diff, SciBERT and TF-IDF models for text similarity.
+
+Token Authentication:
+    Authenticates with multiple Dotmatics systems using the provided credentials and retrieves access tokens.
+
+Experiment ID Retrieval:
+    Fetches a list of experiment IDs from the API endpoint for a specified domain and project.
+
+Text Comparison:
+    Compares write-ups using three methods:
+        Diff: Executes a diff between the two writeups similar to git diff.
+        SciBERT: Utilizes a pre-trained BERT model fine-tuned on scientific literature.
+        TF-IDF: Applies vector-based similarity on word importance.
+
+Asynchronous Processing:
+    Uses Python’s asyncio to parallelize API calls and efficiently process a large number of experiments.
+"""
+
 import aiohttp
 import asyncio
 import asyncpg
