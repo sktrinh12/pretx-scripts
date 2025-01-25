@@ -45,7 +45,7 @@ DS_IDS = {
     "prelude-prod-sdpo-8251": {"proj_id": 98000, "exp_ids": 1403, "summary": 1404},
 }
 BASE_URL = "dotmatics.net/browser/api"
-EXPIRE = 40*60*60
+EXPIRE = 40 * 60 * 60
 DB_POOL = None
 DB_CONFIG = {
     "dbname": getenv("DB_NAME"),
@@ -57,6 +57,7 @@ DB_CONFIG = {
 MODEL_NAME = "allenai/scibert_scivocab_uncased"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModel.from_pretrained(MODEL_NAME)
+
 
 async def init_db(max_size: int):
     """
@@ -261,14 +262,18 @@ async def process_exp_id(exp_id, token_dct, semaphore):
             writeup_data = await fetch(writeup_url_endpoint, headers)
             compr_data[sname] = {"writeup": writeup_data}
 
-            dsid_string = "{0}_PROTOCOL,{0}_PROTOCOL_ID,{0}_ISID,{0}_CREATED_DATE".format(
-                DS_IDS[sname]["summary"]
+            dsid_string = (
+                "{0}_PROTOCOL,{0}_PROTOCOL_ID,{0}_ISID,{0}_CREATED_DATE".format(
+                    DS_IDS[sname]["summary"]
+                )
             )
             exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/{DS_IDS[sname]['proj_id']}/{dsid_string}/{exp_id}"
             summary_data = await fetch(exp_summary_endpoint, headers)
             compr_data[sname]["summary"] = json.dumps(summary_data)
 
-            await save_writeup_to_db(exp_id, sname, writeup_data, json.dumps(summary_data))
+            await save_writeup_to_db(
+                exp_id, sname, writeup_data, json.dumps(summary_data)
+            )
 
         writeup1 = compr_data[SYS_NAMES[1]]["writeup"]
         writeup2 = compr_data[SYS_NAMES[2]]["writeup"]
@@ -302,6 +307,7 @@ async def main(limit: int, max_size: int, cardinal: int):
     Args:
         limit (int): Limit the number of experiment ids fetched
         max_size (int): Max number of connections in the pool
+        cardinal (int): Max number of concurrent asyncio tasks and semaphores
     """
     await init_db(max_size)
     semaphore = asyncio.Semaphore(cardinal)
@@ -322,22 +328,22 @@ async def main(limit: int, max_size: int, cardinal: int):
     headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
     print(f"Fetching experiment IDs from: {url}")
     exp_id_list = await fetch(url, headers)
-    print(exp_id_list)
+    # print(exp_id_list)
     rev_exp_id_list = list(reversed(exp_id_list["ids"]))
 
     print(f"Found {len(rev_exp_id_list)} experiment IDs to process.")
     print()
     input("Press any key to continue...")
     for i in range(0, len(rev_exp_id_list), chunk_size):
-        chunk = rev_exp_id_list[i:i+chunk_size]
+        chunk = rev_exp_id_list[i : i + chunk_size]
         for exp_id in chunk:
             print(f"Queuing task for exp_id: {exp_id} ({i + 1}/{len(rev_exp_id_list)})")
             tasks.append(process_exp_id(exp_id, token_dct, semaphore))
 
-        print("Asyncio processing all experiment IDs...")
+        print(f"Asyncio processing {chunk_size} experiment IDs...")
         await asyncio.gather(*tasks)
         print("All Asyncio tasks completed")
-        tasks.clear() 
+        tasks.clear()
 
     await DB_POOL.close()
     print("Database connection pool closed")
