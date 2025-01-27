@@ -79,7 +79,9 @@ async def init_db(max_size: int):
 
 def create_tables(delete=False):
     """
-    create or drop psql db tables. The two tables are related. ELN_WRITEUP_COMPARISON contains calculated similarity values from a diff, scibert cosine similarity and tf-idf cosine similarity
+    create or drop psql db tables. The two tables are related.
+    ELN_WRITEUP_COMPARISON contains calculated similarity values from a diff,
+    scibert cosine similarity and tf-idf cosine similarity
 
     """
     connection = psycopg2.connect(**DB_CONFIG)
@@ -381,7 +383,6 @@ if __name__ == "__main__":
         help=f"Specify the max number of semaphore connections; must be integer number.",
     )
     args = parser.parse_args()
-    limit = args.limit
     create_tables(delete=args.delete)
     if not args.delete:
-        asyncio.run(main(limit, int(args.max_size), int(args.semaphore)))
+        asyncio.run(main(args.limit, int(args.max_size), int(args.semaphore)))
