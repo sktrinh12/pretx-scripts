@@ -17,17 +17,16 @@ Asynchronous Processing:
     Uses Python’s asyncio to parallelize API calls and efficiently process a large number of experiments.
 """
 
-import aiohttp
-import asyncio
-import asyncpg
 import psycopg2
 from os import getenv
 from dotenv import load_dotenv
 from urllib.parse import quote
+import argparse
+import aiohttp
+import asyncio
+import asyncpg
 from difflib import unified_diff, SequenceMatcher
 import json
-import argparse
-import pandas as pd
 import torch
 from transformers import AutoTokenizer, AutoModel
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -45,7 +44,7 @@ DS_IDS = {
     "prelude-prod-sdpo-8251": {"proj_id": 98000, "exp_ids": 1403, "summary": 1404},
 }
 BASE_URL = "dotmatics.net/browser/api"
-EXPIRE = 24 * 60 * 60
+EXPIRE = 12 * 60 * 60
 MAX_RETRIES = 3
 DB_POOL = None
 DB_CONFIG = {
@@ -124,9 +123,9 @@ def create_tables(delete=False):
     connection.close()
 
 
-async def fetch(url, headers):
+async def fetch_get(url, headers):
     """
-    async method to fetch or get data from DTX api
+    async method to fetch or get data to DTX api
 
     Args:
         url (str): url address of the DTX server
@@ -134,6 +133,20 @@ async def fetch(url, headers):
     """
     async with aiohttp.ClientSession() as session:
         async with session.get(url, headers=headers) as response:
+            return await response.json()
+
+
+async def fetch_post(url, headers, data):
+    """
+    async method to post data to DTX api
+
+    Args:
+        url (str): url address of the DTX server
+        headers (dict): headers that contain the token
+        data (dict, optional): JSON data to send in the POST request
+    """
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, data=data) as response:
             return await response.json()
 
 
@@ -247,67 +260,71 @@ def tfidf_compare(text1, text2):
         return 0
 
 
-async def process_exp_id(exp_id, token_dct, semaphore):
+async def process_exp_id(token_dct, exp_id_chunk, semaphore):
     """
     Processes an individual experiment ID by fetching data, computing differences,
     and saving to the database.
 
     Args:
-        exp_id (str): The experiment ID.
         token_dct (dict): Dictionary of tokens for authentication.
+        exp_id_chunk (list): List of experiment ids as 6-digit numerals.
+        semaphore (semphore): The semaphore object that is based on limited concurrent tasks
     """
-    retries = 0
-    while retries < MAX_RETRIES:
-        try:
-            async with semaphore:
-                compr_data = {}
-                # exclude prod for this first test 2025-24-01
-                for sname in SYS_NAMES[1:]:
-                    writeup_url_endpoint = f"https://{sname}.{BASE_URL}/studies/experiment/{exp_id}/writeup/{{includeHtml}}"
-                    headers = {"Authorization": f"Dotmatics {token_dct[sname]}"}
-                    writeup_data = await fetch(writeup_url_endpoint, headers)
-                    compr_data[sname] = {"writeup": writeup_data}
+    async with semaphore:
 
-                    dsid_string = (
-                        "{0}_PROTOCOL,{0}_PROTOCOL_ID,{0}_ISID,{0}_CREATED_DATE".format(
-                            DS_IDS[sname]["summary"]
-                        )
-                    )
-                    exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/{DS_IDS[sname]['proj_id']}/{dsid_string}/{exp_id}"
-                    summary_data = await fetch(exp_summary_endpoint, headers)
-                    compr_data[sname]["summary"] = json.dumps(summary_data)
+        # first request summary data since using batch api (post request)
+        sdata = {}
+        # exclude prod for this first test 2025-24-01
+        for sname in SYS_NAMES[1:]:
+            exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/{DS_IDS[sname]['proj_id']}/{DS_IDS[sname]["summary"]}"
+            # print(f"Requesting summary data: {exp_summary_endpoint}")
+            headers = {
+                "Authorization": f"Dotmatics {token_dct[sname]}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+            data = {"data": json.dumps(exp_id_chunk)}
+            summary_data = await fetch_post(exp_summary_endpoint, headers, data)
+            for exp_id, exp_details in summary_data.items():
+                primary = exp_details["primary"]
+                ds_summary = exp_details["dataSources"][str(DS_IDS[sname]["summary"])]["1"]
+                sdata.setdefault(sname, {})[primary] = json.dumps(ds_summary)
 
-                    await save_writeup_to_db(
-                        exp_id, sname, writeup_data, json.dumps(summary_data)
-                    )
+        # second request writeup data for single exp_id using get request
+        for exp_id in exp_id_chunk:
+            compr_data = {}
+            # exclude prod for this first test 2025-24-01
+            for sname in SYS_NAMES[1:]:
+                writeup_url_endpoint = f"https://{sname}.{BASE_URL}/studies/experiment/{exp_id}/writeup/{{includeHtml}}"
+                headers = {"Authorization": f"Dotmatics {token_dct[sname]}"}
+                writeup_data = await fetch_get(writeup_url_endpoint, headers)
+                compr_data[sname] = {"writeup": writeup_data}
 
-                writeup1 = compr_data[SYS_NAMES[1]]["writeup"]
-                writeup2 = compr_data[SYS_NAMES[2]]["writeup"]
-                diff = "\n".join(
-                    unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
+                await save_writeup_to_db(
+                    exp_id, sname, writeup_data, sdata[sname][exp_id]
                 )
-                matcher = SequenceMatcher(None, writeup1, writeup2)
-                match_percentage = matcher.ratio() * 100
-                is_match = match_percentage >= 95
 
-                scibert_score = float(scibert_compare(writeup1, writeup2))
-                tfidf_score = float(tfidf_compare(writeup1, writeup2))
+            writeup1 = compr_data[SYS_NAMES[1]]["writeup"]
+            writeup2 = compr_data[SYS_NAMES[2]]["writeup"]
+            diff = "\n".join(
+                unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
+            )
+            matcher = SequenceMatcher(None, writeup1, writeup2)
+            match_percentage = matcher.ratio() * 100
+            is_match = match_percentage >= 95
 
-                await save_compr_to_db(
-                    exp_id,
-                    SYS_NAMES[1],
-                    SYS_NAMES[2],
-                    diff,
-                    match_percentage,
-                    is_match,
-                    scibert_score,
-                    tfidf_score,
-                )
-        except Exception as e:
-            retries += 1
-            if retries == MAX_RETRIES:
-                print(f"Failed to process exp_id {exp_id} after {MAX_RETRIES} retries: {e}")
-            await asyncio.sleep(2 ** retries)
+            scibert_score = float(scibert_compare(writeup1, writeup2))
+            tfidf_score = float(tfidf_compare(writeup1, writeup2))
+
+            await save_compr_to_db(
+                exp_id,
+                SYS_NAMES[1],
+                SYS_NAMES[2],
+                diff,
+                match_percentage,
+                is_match,
+                scibert_score,
+                tfidf_score,
+            )
 
 
 async def main(limit: int, max_size: int, cardinal: int):
@@ -331,25 +348,27 @@ async def main(limit: int, max_size: int, cardinal: int):
     # exclude prod for this first test 2025-24-01
     for sname in SYS_NAMES[1:]:
         token_endpoint = f"https://{sname}.{BASE_URL}/authenticate/requestToken?isid={DM_USER}&password={DM_PASS_ALT if sname.endswith('8251') else DM_PASS}&expiration={EXPIRE}"
-        token_dct[sname] = await fetch(token_endpoint, {})
+        token_dct[sname] = await fetch_get(token_endpoint, {})
     print("Tokens fetched successfully.")
 
     exp_id_query_endpoint = f"query/{DM_USER}/{DS_IDS[DOMAIN]['proj_id']}/{DS_IDS[DOMAIN]['exp_ids']}/EXPERIMENT_ID/greaterthan/1?limit={limit}"
     url = f"https://{DOMAIN}.{BASE_URL}/{exp_id_query_endpoint}"
     headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
     print(f"Fetching experiment IDs from: {url}")
-    exp_id_list = await fetch(url, headers)
+    exp_id_list = await fetch_get(url, headers)
     # print(exp_id_list)
     rev_exp_id_list = list(reversed(exp_id_list["ids"]))
 
-    print(f"Found {len(rev_exp_id_list)} experiment IDs to process.")
+    print(f"{len(rev_exp_id_list)} experiment IDs to process.")
     print()
     input("Press any key to continue...")
     for i in range(0, len(rev_exp_id_list), chunk_size):
         chunk = rev_exp_id_list[i : i + chunk_size]
-        for exp_id in chunk:
-            print(f"Queuing task for exp_id: {exp_id} ({i + 1}/{len(rev_exp_id_list)})")
-            tasks.append(process_exp_id(exp_id, token_dct, semaphore))
+        print(
+            f"Queuing task for exp_id: {', '.join(chunk)} ({i + 1}/{len(rev_exp_id_list)})"
+        )
+        await asyncio.sleep(0.1)
+        tasks.append(process_exp_id(token_dct, chunk, semaphore))
 
         print(f"Asyncio processing {chunk_size} experiment IDs...")
         await asyncio.gather(*tasks)
