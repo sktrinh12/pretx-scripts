@@ -306,7 +306,7 @@ async def process_exp_id(exp_id, token_dct, semaphore):
         except Exception as e:
             retries += 1
             if retries == MAX_RETRIES:
-                print(f"Failed to process exp_id {exp_id} after {max_retries} retries: {e}")
+                print(f"Failed to process exp_id {exp_id} after {MAX_RETRIES} retries: {e}")
             await asyncio.sleep(2 ** retries)
 
 
