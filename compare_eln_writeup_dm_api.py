@@ -57,6 +57,7 @@ DB_CONFIG = {
 MODEL_NAME = "allenai/scibert_scivocab_uncased"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModel.from_pretrained(MODEL_NAME)
+exp_id_list = []
 
 
 async def init_db(max_size: int):
@@ -77,13 +78,14 @@ async def init_db(max_size: int):
     )
 
 
-def create_tables(delete=False):
+def create_tables(delete=False, cont=True):
     """
     create or drop psql db tables. The two tables are related.
     ELN_WRITEUP_COMPARISON contains calculated similarity values from a diff,
     scibert cosine similarity and tf-idf cosine similarity
 
     """
+    global exp_id_list
     connection = psycopg2.connect(**DB_CONFIG)
     cursor = connection.cursor()
     if delete:
@@ -103,7 +105,7 @@ def create_tables(delete=False):
         )
         cursor.execute(
             """
-            CREATE TABLE ELN_WRITEUP_COMPARISON (
+            CREATE TABLE IF NOT EXISTS ELN_WRITEUP_COMPARISON (
                 exp_id VARCHAR NOT NULL,
                 system_name_1 VARCHAR NOT NULL,
                 system_name_2 VARCHAR NOT NULL,
@@ -118,6 +120,12 @@ def create_tables(delete=False):
             ); 
         """
         )
+    if cont:
+        cursor.execute("SELECT exp_id from ELN_WRITEUP_API_EXTRACT")
+        stored_exp_ids = cursor.fetchall() 
+        exp_id_list = [row[0] for row in stored_exp_ids]
+        print(exp_id_list)
+
     connection.commit()
     cursor.close()
     connection.close()
@@ -143,7 +151,7 @@ async def fetch_post(url, headers, data):
     Args:
         url (str): url address of the DTX server
         headers (dict): headers that contain the token
-        data (dict, optional): JSON data to send in the POST request
+        data (dict): JSON data to send in the POST request
     """
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=headers, data=data) as response:
@@ -355,9 +363,10 @@ async def main(limit: int, max_size: int, cardinal: int):
     url = f"https://{DOMAIN}.{BASE_URL}/{exp_id_query_endpoint}"
     headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
     print(f"Fetching experiment IDs from: {url}")
-    exp_id_list = await fetch_get(url, headers)
-    # print(exp_id_list)
-    rev_exp_id_list = list(reversed(exp_id_list["ids"]))
+    exp_id_list_api = await fetch_get(url, headers)
+    exp_id_list_api = [exp_id for exp_id in exp_id_list_api if exp_id not in exp_id_list]
+    # print(exp_id_list_api)
+    rev_exp_id_list = list(reversed(exp_id_list_api["ids"]))
 
     print(f"{len(rev_exp_id_list)} experiment IDs to process.")
     print()
@@ -410,7 +419,14 @@ if __name__ == "__main__":
         type=int,
         help=f"Specify the max number of semaphore connections; must be integer number.",
     )
+    parser.add_argument(
+        "-c",
+        "--continue",
+        dest="continue_flag",
+        action="store_false",
+        help="Specify whether to continue from where left off from the PostgreSQL database. If not provided, defaults to continue (True).",
+    )
     args = parser.parse_args()
-    create_tables(delete=args.delete)
+    create_tables(delete=args.delete, cont=args.continue_flag)
     if not args.delete:
         asyncio.run(main(args.limit, int(args.max_size), int(args.semaphore)))
