@@ -46,6 +46,7 @@ DS_IDS = {
 }
 BASE_URL = "dotmatics.net/browser/api"
 EXPIRE = 40 * 60 * 60
+MAX_RETRIES = 3
 DB_POOL = None
 DB_CONFIG = {
     "dbname": getenv("DB_NAME"),
@@ -255,50 +256,58 @@ async def process_exp_id(exp_id, token_dct, semaphore):
         exp_id (str): The experiment ID.
         token_dct (dict): Dictionary of tokens for authentication.
     """
-    async with semaphore:
-        compr_data = {}
-        # exclude prod for this first test 2025-24-01
-        for sname in SYS_NAMES[1:]:
-            writeup_url_endpoint = f"https://{sname}.{BASE_URL}/studies/experiment/{exp_id}/writeup/{{includeHtml}}"
-            headers = {"Authorization": f"Dotmatics {token_dct[sname]}"}
-            writeup_data = await fetch(writeup_url_endpoint, headers)
-            compr_data[sname] = {"writeup": writeup_data}
+    retries = 0
+    while retries < MAX_RETRIES:
+        try:
+            async with semaphore:
+                compr_data = {}
+                # exclude prod for this first test 2025-24-01
+                for sname in SYS_NAMES[1:]:
+                    writeup_url_endpoint = f"https://{sname}.{BASE_URL}/studies/experiment/{exp_id}/writeup/{{includeHtml}}"
+                    headers = {"Authorization": f"Dotmatics {token_dct[sname]}"}
+                    writeup_data = await fetch(writeup_url_endpoint, headers)
+                    compr_data[sname] = {"writeup": writeup_data}
 
-            dsid_string = (
-                "{0}_PROTOCOL,{0}_PROTOCOL_ID,{0}_ISID,{0}_CREATED_DATE".format(
-                    DS_IDS[sname]["summary"]
+                    dsid_string = (
+                        "{0}_PROTOCOL,{0}_PROTOCOL_ID,{0}_ISID,{0}_CREATED_DATE".format(
+                            DS_IDS[sname]["summary"]
+                        )
+                    )
+                    exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/{DS_IDS[sname]['proj_id']}/{dsid_string}/{exp_id}"
+                    summary_data = await fetch(exp_summary_endpoint, headers)
+                    compr_data[sname]["summary"] = json.dumps(summary_data)
+
+                    await save_writeup_to_db(
+                        exp_id, sname, writeup_data, json.dumps(summary_data)
+                    )
+
+                writeup1 = compr_data[SYS_NAMES[1]]["writeup"]
+                writeup2 = compr_data[SYS_NAMES[2]]["writeup"]
+                diff = "\n".join(
+                    unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
                 )
-            )
-            exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/{DS_IDS[sname]['proj_id']}/{dsid_string}/{exp_id}"
-            summary_data = await fetch(exp_summary_endpoint, headers)
-            compr_data[sname]["summary"] = json.dumps(summary_data)
+                matcher = SequenceMatcher(None, writeup1, writeup2)
+                match_percentage = matcher.ratio() * 100
+                is_match = match_percentage >= 95
 
-            await save_writeup_to_db(
-                exp_id, sname, writeup_data, json.dumps(summary_data)
-            )
+                scibert_score = float(scibert_compare(writeup1, writeup2))
+                tfidf_score = float(tfidf_compare(writeup1, writeup2))
 
-        writeup1 = compr_data[SYS_NAMES[1]]["writeup"]
-        writeup2 = compr_data[SYS_NAMES[2]]["writeup"]
-        diff = "\n".join(
-            unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
-        )
-        matcher = SequenceMatcher(None, writeup1, writeup2)
-        match_percentage = matcher.ratio() * 100
-        is_match = match_percentage >= 95
-
-        scibert_score = float(scibert_compare(writeup1, writeup2))
-        tfidf_score = float(tfidf_compare(writeup1, writeup2))
-
-        await save_compr_to_db(
-            exp_id,
-            SYS_NAMES[1],
-            SYS_NAMES[2],
-            diff,
-            match_percentage,
-            is_match,
-            scibert_score,
-            tfidf_score,
-        )
+                await save_compr_to_db(
+                    exp_id,
+                    SYS_NAMES[1],
+                    SYS_NAMES[2],
+                    diff,
+                    match_percentage,
+                    is_match,
+                    scibert_score,
+                    tfidf_score,
+                )
+        except Exception as e:
+            retries += 1
+            if retries == MAX_RETRIES:
+                print(f"Failed to process exp_id {exp_id} after {max_retries} retries: {e}")
+            await asyncio.sleep(2 ** retries)
 
 
 async def main(limit: int, max_size: int, cardinal: int):
