@@ -364,9 +364,9 @@ async def main(limit: int, max_size: int, cardinal: int):
     headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
     print(f"Fetching experiment IDs from: {url}")
     exp_id_list_api = await fetch_get(url, headers)
-    exp_id_list_api = [exp_id for exp_id in exp_id_list_api if exp_id not in exp_id_list]
+    exp_id_list_api = [exp_id for exp_id in exp_id_list_api["ids"] if exp_id not in exp_id_list]
     # print(exp_id_list_api)
-    rev_exp_id_list = list(reversed(exp_id_list_api["ids"]))
+    rev_exp_id_list = list(reversed(exp_id_list_api))
 
     print(f"{len(rev_exp_id_list)} experiment IDs to process.")
     print()
