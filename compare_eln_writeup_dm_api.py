@@ -122,10 +122,12 @@ def create_tables(delete=False, cont=True):
         )
     if cont:
         cursor.execute("SELECT distinct exp_id from ELN_WRITEUP_API_EXTRACT")
-        stored_exp_ids = cursor.fetchall() 
+        stored_exp_ids = cursor.fetchall()
         exp_id_list = [row[0] for row in stored_exp_ids]
         print(exp_id_list[:100])
-        print(f'first 100 records of {len(exp_id_list)}, from PostgreSQL database fetched...')
+        print(
+            f"first 100 records of {len(exp_id_list)}, from PostgreSQL database fetched..."
+        )
 
     connection.commit()
     cursor.close()
@@ -365,7 +367,9 @@ async def main(limit: int, max_size: int, cardinal: int):
     headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
     print(f"Fetching experiment IDs from: {url}")
     exp_id_list_api = await fetch_get(url, headers)
-    exp_id_list_api = [exp_id for exp_id in exp_id_list_api["ids"] if exp_id not in exp_id_list]
+    exp_id_list_api = [
+        exp_id for exp_id in exp_id_list_api["ids"] if exp_id not in exp_id_list
+    ]
     # print(exp_id_list_api)
     rev_exp_id_list = list(reversed(exp_id_list_api))
 
