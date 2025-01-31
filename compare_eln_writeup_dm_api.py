@@ -44,7 +44,7 @@ DS_IDS = {
     "prelude-prod-sdpo-8251": {"proj_id": 98000, "exp_ids": 1403, "summary": 1404},
 }
 BASE_URL = "dotmatics.net/browser/api"
-EXPIRE = 32 * 60 * 60
+EXPIRE = 4 * 60 * 60
 MAX_RETRIES = 3
 DB_POOL = None
 DB_CONFIG = {
@@ -121,10 +121,11 @@ def create_tables(delete=False, cont=True):
         """
         )
     if cont:
-        cursor.execute("SELECT exp_id from ELN_WRITEUP_API_EXTRACT")
+        cursor.execute("SELECT distinct exp_id from ELN_WRITEUP_API_EXTRACT")
         stored_exp_ids = cursor.fetchall() 
         exp_id_list = [row[0] for row in stored_exp_ids]
-        print(exp_id_list)
+        print(exp_id_list[:100])
+        print(f'first 100 records of {len(exp_id_list)}, from PostgreSQL database fetched...')
 
     connection.commit()
     cursor.close()
