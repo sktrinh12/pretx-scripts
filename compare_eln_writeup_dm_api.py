@@ -28,6 +28,7 @@ import asyncpg
 from difflib import unified_diff, SequenceMatcher
 import json
 import torch
+from datetime import date, datetime
 from transformers import AutoTokenizer, AutoModel
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -44,7 +45,7 @@ DS_IDS = {
     "prelude-prod-sdpo-8251": {"proj_id": 98000, "exp_ids": 1403, "summary": 1404},
 }
 BASE_URL = "dotmatics.net/browser/api"
-EXPIRE = 4 * 60 * 60
+EXPIRE = 1 * 60 * 60
 MAX_RETRIES = 3
 DB_POOL = None
 DB_CONFIG = {
@@ -58,6 +59,8 @@ MODEL_NAME = "allenai/scibert_scivocab_uncased"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModel.from_pretrained(MODEL_NAME)
 exp_id_list = []
+
+
 
 
 async def init_db(max_size: int):
@@ -99,7 +102,8 @@ def create_tables(delete=False, cont=True):
                 system_name VARCHAR(100) NOT NULL,
                 write_up TEXT NOT NULL,
                 summary_data TEXT NOT NULL,
-                PRIMARY KEY(exp_id, system_name)
+                analysis_date DATE NOT NULL,
+                PRIMARY KEY(exp_id, system_name, analysis_date)
             );
         """
         )
@@ -114,13 +118,14 @@ def create_tables(delete=False, cont=True):
                 is_match BOOLEAN,
                 scibert_score NUMERIC,
                 tfidf_score NUMERIC,
-                PRIMARY KEY (exp_id, system_name_1, system_name_2),
-                FOREIGN KEY (exp_id, system_name_1) REFERENCES eln_writeup_api_extract (exp_id, system_name),
-                FOREIGN KEY (exp_id, system_name_2) REFERENCES eln_writeup_api_extract (exp_id, system_name)
+                analysis_date DATE NOT NULL,
+                PRIMARY KEY (exp_id, system_name_1, system_name_2, analysis_date),
+                FOREIGN KEY (exp_id, system_name_1, analysis_date) REFERENCES eln_writeup_api_extract (exp_id, system_name, analysis_date),
+                FOREIGN KEY (exp_id, system_name_2, analysis_date) REFERENCES eln_writeup_api_extract (exp_id, system_name, analysis_date)
             ); 
         """
         )
-    if cont:
+    if cont and not delete:
         cursor.execute("SELECT distinct exp_id from ELN_WRITEUP_API_EXTRACT")
         stored_exp_ids = cursor.fetchall()
         exp_id_list = [row[0] for row in stored_exp_ids]
@@ -161,7 +166,7 @@ async def fetch_post(url, headers, data):
             return await response.json()
 
 
-async def save_writeup_to_db(exp_id, system_name, writeup, summary):
+async def save_writeup_to_db(exp_id, system_name, writeup, summary, analysis_date):
     """
     Saves writeup data to the database.
 
@@ -170,17 +175,19 @@ async def save_writeup_to_db(exp_id, system_name, writeup, summary):
         system_name (str): System name.
         writeup (str): The writeup content.
         summary (dict): Summary data.
+        analysis_date (date): Date analysed.
     """
     async with DB_POOL.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO ELN_WRITEUP_API_EXTRACT (exp_id, system_name, write_up, summary_data)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO ELN_WRITEUP_API_EXTRACT (exp_id, system_name, write_up, summary_data, analysis_date)
+            VALUES ($1, $2, $3, $4, $5)
             """,
             exp_id,
             system_name,
             writeup,
             summary,
+            analysis_date,
         )
 
 
@@ -193,6 +200,7 @@ async def save_compr_to_db(
     is_match,
     scibert_score,
     tfidf_score,
+    analysis_date,
 ):
     """
     Saves comparison data to the database.
@@ -206,12 +214,13 @@ async def save_compr_to_db(
         is_match (bool): Whether the match percentage meets the threshold.
         scibertt_score (float): scibert model cosine similarity score.
         tfidf_score (float): tf-idf model cosine similarity score.
+        analysis_date (date): Date analysed.
     """
     async with DB_POOL.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO ELN_WRITEUP_COMPARISON (exp_id, system_name_1, system_name_2, diff, match_percentage, is_match, scibert_score, tfidf_score)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO ELN_WRITEUP_COMPARISON (exp_id, system_name_1, system_name_2, diff, match_percentage, is_match, scibert_score, tfidf_score, analysis_date)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             """,
             exp_id,
             system_name_1,
@@ -221,6 +230,29 @@ async def save_compr_to_db(
             is_match,
             scibert_score,
             tfidf_score,
+            analysis_date,
+        )
+
+
+async def fetch_write_up(exp_id: str, system_name: str, analysis_date: date):
+    """Fetch the write_up from eln_writeup_api_extract based on exp_id and system_name.
+
+    Args:
+        exp_id (str): Experiment ID.
+        system_name (str): System name.
+        analysis_date (date): Date analysed.
+    """
+    async with DB_POOL.acquire() as conn:
+        return await conn.fetchval(
+            """
+            SELECT write_up 
+            FROM eln_writeup_api_extract 
+            WHERE exp_id = $1 AND system_name = $2
+            AND analysis_date = $3
+            """,
+            exp_id,
+            system_name,
+            analysis_date,
         )
 
 
@@ -271,7 +303,7 @@ def tfidf_compare(text1, text2):
         return 0
 
 
-async def process_exp_id(token_dct, exp_id_chunk, semaphore):
+async def process_exp_id(token_dct, exp_id_chunk, semaphore, analysis_date):
     """
     Processes an individual experiment ID by fetching data, computing differences,
     and saving to the database.
@@ -279,13 +311,15 @@ async def process_exp_id(token_dct, exp_id_chunk, semaphore):
     Args:
         token_dct (dict): Dictionary of tokens for authentication.
         exp_id_chunk (list): List of experiment ids as 6-digit numerals.
-        semaphore (semphore): The semaphore object that is based on limited concurrent tasks
+        semaphore (semphore): The semaphore object that is based on limited concurrent tasks.
+        analysis_date (date): Date analysed.
     """
+
     async with semaphore:
 
         # first request summary data since using batch api (post request)
         sdata = {}
-        # exclude prod for this first test 2025-24-01
+        # only include prelude-masks after the DTX partial fix 2024-02-03
         for sname in SYS_NAMES[1:]:
             exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/{DS_IDS[sname]['proj_id']}/{DS_IDS[sname]["summary"]}"
             # print(f"Requesting summary data: {exp_summary_endpoint}")
@@ -303,7 +337,7 @@ async def process_exp_id(token_dct, exp_id_chunk, semaphore):
         # second request writeup data for single exp_id using get request
         for exp_id in exp_id_chunk:
             compr_data = {}
-            # exclude prod for this first test 2025-24-01
+            # only include prelude-masks after the DTX partial fix 2024-02-03
             for sname in SYS_NAMES[1:]:
                 writeup_url_endpoint = f"https://{sname}.{BASE_URL}/studies/experiment/{exp_id}/writeup/{{includeHtml}}"
                 headers = {"Authorization": f"Dotmatics {token_dct[sname]}"}
@@ -311,11 +345,13 @@ async def process_exp_id(token_dct, exp_id_chunk, semaphore):
                 compr_data[sname] = {"writeup": writeup_data}
 
                 await save_writeup_to_db(
-                    exp_id, sname, writeup_data, sdata[sname][exp_id]
+                    exp_id, sname, writeup_data, sdata[sname][exp_id], analysis_date
                 )
 
             writeup1 = compr_data[SYS_NAMES[1]]["writeup"]
-            writeup2 = compr_data[SYS_NAMES[2]]["writeup"]
+            # writeup2 = compr_data[SYS_NAMES[2]]["writeup"]
+
+            writeup2 = await fetch_write_up(exp_id, SYS_NAMES[2], analysis_date)
             diff = "\n".join(
                 unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
             )
@@ -335,6 +371,7 @@ async def process_exp_id(token_dct, exp_id_chunk, semaphore):
                 is_match,
                 scibert_score,
                 tfidf_score,
+                analysis_date,
             )
 
 
@@ -352,11 +389,14 @@ async def main(limit: int, max_size: int, cardinal: int):
     semaphore = asyncio.Semaphore(cardinal)
     chunk_size = cardinal
     tasks = []
+    analysis_date = date.today()
+
+    # analysis_date = datetime.strptime('2025-01-30', "%Y-%m-%d").date()
     # get the prod-sdpo-8251 domain exp ids bc from 2024-AUG
     # has only subset of exp ids from prod
     DOMAIN = SYS_NAMES[2]
     token_dct = {}
-    # exclude prod for this first test 2025-24-01
+    # only include prelude-masks after the DTX partial fix 2024-02-03
     for sname in SYS_NAMES[1:]:
         token_endpoint = f"https://{sname}.{BASE_URL}/authenticate/requestToken?isid={DM_USER}&password={DM_PASS_ALT if sname.endswith('8251') else DM_PASS}&expiration={EXPIRE}"
         token_dct[sname] = await fetch_get(token_endpoint, {})
@@ -382,7 +422,7 @@ async def main(limit: int, max_size: int, cardinal: int):
             f"Queuing task for exp_id: {', '.join(chunk)} ({i + 1}/{len(rev_exp_id_list)})"
         )
         await asyncio.sleep(0.1)
-        tasks.append(process_exp_id(token_dct, chunk, semaphore))
+        tasks.append(process_exp_id(token_dct, chunk, semaphore, analysis_date))
 
         print(f"Asyncio processing {chunk_size} experiment IDs...")
         await asyncio.gather(*tasks)
