@@ -62,7 +62,6 @@ exp_id_list = []
 
 
 
-
 async def init_db(max_size: int):
     """
     Initializes the database connection pool.
@@ -482,13 +481,12 @@ async def main(limit: int, max_size: int, cardinal: int):
     # ]
     # print(exp_id_list_api)
 
+    # priority for CRO affinity
     async with DB_POOL.acquire() as conn:
         exp_id_list = await conn.fetch(
             """
-            SELECT distinct exp_id 
-            from ELN_WRITEUP_API_EXTRACT 
-            where analysis_date <> '2025-01-30'
-            order by exp_id desc
+            SELECT exp_id 
+            from prioritized_experiments 
             """
         )
      
