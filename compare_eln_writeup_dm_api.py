@@ -32,6 +32,7 @@ from datetime import date, datetime
 from transformers import AutoTokenizer, AutoModel
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import re
 
 
 load_dotenv(override=True)
@@ -137,6 +138,19 @@ def create_tables(delete=False, cont=True):
     connection.commit()
     cursor.close()
     connection.close()
+
+
+def clean_text(text):
+    text = (
+    text.replace("\r", "")  # Remove CR
+        .replace("\u200b", "")  # Remove zero-width space
+        .replace("\u00A0", " ")  # Replace non-breaking spaces with normal spaces
+        .replace("\u00AD", "")  # Remove soft hyphen
+        .encode("utf-8", "ignore").decode("utf-8")  # Remove any non-UTF characters
+        .strip()  # Trim leading and trailing spaces/newlines
+        )
+    # Normalize multiple spaces to a single space
+    return re.sub(r"\s+", " ", text)
 
 
 async def fetch_get(url, headers):
@@ -407,6 +421,9 @@ async def process_exp_id(exp_id_chunk, semaphore, analysis_date_1, analysis_date
         for exp_id in exp_id_chunk:
             writeup1 = await fetch_write_up(exp_id, SYS_NAMES[1], analysis_date_1)
             writeup2 = await fetch_write_up(exp_id, SYS_NAMES[1], analysis_date_2)
+            writeup1 = clean_text(writeup1)
+            writeup2 = clean_text(writeup2)
+
             diff = "\n".join(
                 unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
             )
@@ -457,7 +474,7 @@ async def main(limit: int, max_size: int, cardinal: int):
     semaphore = asyncio.Semaphore(cardinal)
     chunk_size = cardinal
     tasks = []
-    analysis_date_1 = datetime.strptime('2025-02-05', '%Y-%m-%d').date() # date.today()
+    analysis_date_1 = datetime.strptime('2025-02-05', '%Y-%m-%d').date()
     analysis_date_2 = datetime.strptime('2025-01-30', '%Y-%m-%d').date() # date.today()
 
     # analysis_date = datetime.strptime('2025-01-30', "%Y-%m-%d").date()
