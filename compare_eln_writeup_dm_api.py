@@ -405,7 +405,7 @@ async def process_exp_id(exp_id_chunk, semaphore, analysis_date_1, analysis_date
 
         for exp_id in exp_id_chunk:
             writeup1 = await fetch_write_up(exp_id, SYS_NAMES[1], analysis_date_1)
-            writeup2 = await fetch_write_up(exp_id, SYS_NAMES[1], analysis_date_2)
+            writeup2 = await fetch_write_up(exp_id, SYS_NAMES[2], analysis_date_2)
 
             diff = "\n".join(
                 unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
