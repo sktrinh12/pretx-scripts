@@ -61,7 +61,6 @@ model = AutoModel.from_pretrained(MODEL_NAME)
 exp_id_list = []
 
 
-
 async def init_db(max_size: int):
     """
     Initializes the database connection pool.
@@ -121,11 +120,13 @@ def create_tables(delete=False, cont=True):
                 PRIMARY KEY (exp_id, system_name_1, system_name_2, analysis_date),
                 FOREIGN KEY (exp_id, system_name_1, analysis_date) REFERENCES eln_writeup_api_extract (exp_id, system_name, analysis_date),
                 FOREIGN KEY (exp_id, system_name_2, analysis_date) REFERENCES eln_writeup_api_extract (exp_id, system_name, analysis_date)
-            ); 
+            );
         """
         )
     if cont and not delete:
-        cursor.execute("SELECT distinct exp_id from ELN_WRITEUP_API_EXTRACT where analysis_date <> '2024-01-30'")
+        cursor.execute(
+            "SELECT distinct exp_id from ELN_WRITEUP_API_EXTRACT where analysis_date NOT IN ('2025-01-30', '2025-02-05')"
+        )
         stored_exp_ids = cursor.fetchall()
         exp_id_list = [row[0] for row in stored_exp_ids]
         print(exp_id_list[:100])
@@ -261,14 +262,14 @@ async def update_compr(
     async with DB_POOL.acquire() as conn:
         await conn.execute(
             """
-            UPDATE ELN_WRITEUP_COMPARISON 
+            UPDATE ELN_WRITEUP_COMPARISON
             SET diff =  $4,
             match_percentage = $5,
             is_match = $6,
             scibert_score = $7,
             tfidf_score = $8
             WHERE
-            exp_id = $1 
+            exp_id = $1
             AND system_name_1 = $2
             AND system_name_2 = $3
             AND analysis_date = $9
@@ -296,8 +297,8 @@ async def fetch_write_up(exp_id: str, system_name: str, analysis_date: date):
     async with DB_POOL.acquire() as conn:
         return await conn.fetchval(
             """
-            SELECT write_up 
-            FROM eln_writeup_api_extract 
+            SELECT write_up
+            FROM eln_writeup_api_extract
             WHERE exp_id = $1 AND system_name = $2
             AND analysis_date = $3
             """,
@@ -354,8 +355,10 @@ def tfidf_compare(text1, text2):
         return 0
 
 
-async def process_exp_id(exp_id_chunk, semaphore, analysis_date_1, analysis_date_2):
-# async def process_exp_id(token_dct, exp_id_chunk, semaphore, analysis_date):
+# async def process_exp_id(exp_id_chunk, semaphore, analysis_date_1, analysis_date_2):
+async def process_exp_id(
+    token_dct, exp_id_chunk, semaphore, analysis_date_1, analysis_date_2
+):
     """
     Processes an individual experiment ID by fetching data, computing differences,
     and saving to the database.
@@ -370,41 +373,45 @@ async def process_exp_id(exp_id_chunk, semaphore, analysis_date_1, analysis_date
     async with semaphore:
 
         # first request summary data since using batch api (post request)
-        # sdata = {}
-        # only include prelude-masks after the DTX partial fix 2024-02-03
-        # for sname in SYS_NAMES[1:]:
-        #     exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/{DS_IDS[sname]['proj_id']}/{DS_IDS[sname]["summary"]}"
-        #     # print(f"Requesting summary data: {exp_summary_endpoint}")
-        #     headers = {
-        #         "Authorization": f"Dotmatics {token_dct[sname]}",
-        #         "Content-Type": "application/x-www-form-urlencoded",
-        #     }
-        #     data = {"data": json.dumps(exp_id_chunk)}
-        #     summary_data = await fetch_post(exp_summary_endpoint, headers, data)
-        #     for exp_id, exp_details in summary_data.items():
-        #         primary = exp_details["primary"]
-        #         ds_summary = exp_details["dataSources"][str(DS_IDS[sname]["summary"])]["1"]
-        #         sdata.setdefault(sname, {})[primary] = json.dumps(ds_summary)
-        #
+        sdata = {}
+
+        # only fetch from production
+        for sname in [SYS_NAMES[0]]:
+            exp_summary_endpoint = f"https://{sname}.{BASE_URL}/data/{DM_USER}/{DS_IDS[sname]['proj_id']}/{DS_IDS[sname]["summary"]}"
+            # print(f"Requesting summary data: {exp_summary_endpoint}")
+            headers = {
+                "Authorization": f"Dotmatics {token_dct[sname]}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+            data = {"data": json.dumps(exp_id_chunk)}
+            summary_data = await fetch_post(exp_summary_endpoint, headers, data)
+            for exp_id, exp_details in summary_data.items():
+                primary = exp_details["primary"]
+                ds_summary = exp_details["dataSources"][str(DS_IDS[sname]["summary"])][
+                    "1"
+                ]
+                sdata.setdefault(sname, {})[primary] = json.dumps(ds_summary)
+
         # second request writeup data for single exp_id using get request
-        # for exp_id in exp_id_chunk:
-        #     compr_data = {}
-        #     # only include prelude-masks after the DTX partial fix 2024-02-03
-        #     for sname in SYS_NAMES[1:]:
-        #         writeup_url_endpoint = f"https://{sname}.{BASE_URL}/studies/experiment/{exp_id}/writeup/{{includeHtml}}"
-        #         headers = {"Authorization": f"Dotmatics {token_dct[sname]}"}
-        #         writeup_data = await fetch_get(writeup_url_endpoint, headers)
-        #         compr_data[sname] = {"writeup": writeup_data}
-        #
-        #         await save_writeup_to_db(
-        #             exp_id, sname, writeup_data, sdata[sname][exp_id], analysis_date
-        #         )
-        #
-            # writeup1 = compr_data[SYS_NAMES[1]]["writeup"]
+        for exp_id in exp_id_chunk:
+            compr_data = {}
+
+            # only fetch from production
+            for sname in [SYS_NAMES[0]]:
+                writeup_url_endpoint = f"https://{sname}.{BASE_URL}/studies/experiment/{exp_id}/writeup/{{includeHtml}}"
+                headers = {"Authorization": f"Dotmatics {token_dct[sname]}"}
+                writeup_data = await fetch_get(writeup_url_endpoint, headers)
+                compr_data[sname] = {"writeup": writeup_data}
+
+                await save_writeup_to_db(
+                    exp_id, sname, writeup_data, sdata[sname][exp_id], analysis_date
+                )
+
+            writeup1 = compr_data[SYS_NAMES[0]]["writeup"]
             # writeup2 = compr_data[SYS_NAMES[2]]["writeup"]
 
-        for exp_id in exp_id_chunk:
-            writeup1 = await fetch_write_up(exp_id, SYS_NAMES[1], analysis_date_1)
+            # for exp_id in exp_id_chunk:
+            # writeup1 = await fetch_write_up(exp_id, SYS_NAMES[1], analysis_date_1)
             writeup2 = await fetch_write_up(exp_id, SYS_NAMES[2], analysis_date_2)
 
             diff = "\n".join(
@@ -417,11 +424,22 @@ async def process_exp_id(exp_id_chunk, semaphore, analysis_date_1, analysis_date
             scibert_score = float(scibert_compare(writeup1, writeup2))
             tfidf_score = float(tfidf_compare(writeup1, writeup2))
 
-            # need to artificially set system_name_2 to sdpo to match the row from before and change it in sql to be the same domain name since we are comparing a before and after bug fix
-            await update_compr(
+            # await update_compr(
+            #     exp_id,
+            #     SYS_NAMES[1],
+            #     SYS_NAMES[2],
+            #     diff,
+            #     match_percentage,
+            #     is_match,
+            #     scibert_score,
+            #     tfidf_score,
+            #     analysis_date_1,
+            # )
+
+            await save_compr_to_db(
                 exp_id,
-                SYS_NAMES[1],
-                SYS_NAMES[2], 
+                SYS_NAMES[0],
+                SYS_NAMES[2],
                 diff,
                 match_percentage,
                 is_match,
@@ -430,17 +448,7 @@ async def process_exp_id(exp_id_chunk, semaphore, analysis_date_1, analysis_date
                 analysis_date_1,
             )
 
-            # await save_compr_to_db(
-            #     exp_id,
-            #     SYS_NAMES[1],
-            #     SYS_NAMES[1],
-            #     diff,
-            #     match_percentage,
-            #     is_match,
-            #     scibert_score,
-            #     tfidf_score,
-            #     analysis_date,
-            # )
+            await asyncio.sleep(0.1)
 
 
 async def main(limit: int, max_size: int, cardinal: int):
@@ -457,45 +465,45 @@ async def main(limit: int, max_size: int, cardinal: int):
     semaphore = asyncio.Semaphore(cardinal)
     chunk_size = cardinal
     tasks = []
-    analysis_date_1 = datetime.strptime('2025-02-05', '%Y-%m-%d').date()
-    analysis_date_2 = datetime.strptime('2025-01-30', '%Y-%m-%d').date() # date.today()
+    analysis_date_1 = date.today()
+    analysis_date_2 = datetime.strptime("2025-01-30", "%Y-%m-%d").date()
 
-    # analysis_date = datetime.strptime('2025-01-30', "%Y-%m-%d").date()
     # get the prod-sdpo-8251 domain exp ids bc from 2024-AUG
     # has only subset of exp ids from prod
-    # DOMAIN = SYS_NAMES[2]
-    # token_dct = {}
-    # only include prelude-masks after the DTX partial fix 2024-02-03
-    # for sname in SYS_NAMES[1:]:
-    #     token_endpoint = f"https://{sname}.{BASE_URL}/authenticate/requestToken?isid={DM_USER}&password={DM_PASS_ALT if sname.endswith('8251') else DM_PASS}&expiration={EXPIRE}"
-    #     token_dct[sname] = await fetch_get(token_endpoint, {})
-    # print("Tokens fetched successfully.")
-    #
-    # exp_id_query_endpoint = f"query/{DM_USER}/{DS_IDS[DOMAIN]['proj_id']}/{DS_IDS[DOMAIN]['exp_ids']}/EXPERIMENT_ID/greaterthan/1?limit={limit}"
-    # url = f"https://{DOMAIN}.{BASE_URL}/{exp_id_query_endpoint}"
-    # headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
-    # print(f"Fetching experiment IDs from: {url}")
-    # exp_id_list_api = await fetch_get(url, headers)
-    # exp_id_list_api = [
-    #     exp_id for exp_id in exp_id_list_api["ids"] if exp_id not in exp_id_list
-    # ]
+    DOMAIN = SYS_NAMES[2]
+    token_dct = {}
+
+    for sname in SYS_NAMES:
+        token_endpoint = f"https://{sname}.{BASE_URL}/authenticate/requestToken?isid={DM_USER}&password={DM_PASS_ALT if sname.endswith('8251') else DM_PASS}&expiration={EXPIRE}"
+        token_dct[sname] = await fetch_get(token_endpoint, {})
+
+    print("Tokens fetched successfully.")
+
+    exp_id_query_endpoint = f"query/{DM_USER}/{DS_IDS[DOMAIN]['proj_id']}/{DS_IDS[DOMAIN]['exp_ids']}/EXPERIMENT_ID/greaterthan/1?limit={limit}"
+    url = f"https://{DOMAIN}.{BASE_URL}/{exp_id_query_endpoint}"
+    headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
+    print(f"Fetching experiment IDs from: {url}")
+    exp_id_list_api = await fetch_get(url, headers)
+    exp_id_list_api = [
+        exp_id for exp_id in exp_id_list_api["ids"] if exp_id not in exp_id_list
+    ]
     # print(exp_id_list_api)
 
     # priority for CRO affinity
-    async with DB_POOL.acquire() as conn:
-        exp_id_list = await conn.fetch(
-            """
-            SELECT exp_id 
-            from prioritized_experiments 
-            """
-        )
-     
-    # rev_exp_id_list = list(reversed(exp_id_list_api))
-    rev_exp_id_list = [str(record["exp_id"]) for record in exp_id_list]
+    # async with DB_POOL.acquire() as conn:
+    #     exp_id_list = await conn.fetch(
+    #         """
+    #         SELECT exp_id
+    #         from prioritized_experiments
+    #         """
+    #     )
+
+    rev_exp_id_list = list(reversed(exp_id_list_api))
+    # rev_exp_id_list = [str(record["exp_id"]) for record in exp_id_list]
 
     print(f"{len(rev_exp_id_list)} experiment IDs to process.")
     print()
-    print('showing only first 200 experiment ids fetched...')
+    print("showing only first 200 experiment ids fetched...")
     print(rev_exp_id_list[:200])
     print()
     input("Press any key to continue...")
@@ -504,9 +512,17 @@ async def main(limit: int, max_size: int, cardinal: int):
         print(
             f"Queuing task for exp_id: {', '.join(chunk)} ({i + 1}/{len(rev_exp_id_list)})"
         )
-        await asyncio.sleep(0.1)
-        # tasks.append(process_exp_id(token_dct, chunk, semaphore, analysis_date))
-        tasks.append(process_exp_id(chunk, semaphore, analysis_date_1, analysis_date_2))
+        tasks.append(
+            process_exp_id(
+                token_dct,
+                chunk,
+                semaphore,
+                analysis_date,
+                analysis_date_1,
+                analysis_date_2,
+            )
+        )
+        # tasks.append(process_exp_id(chunk, semaphore, analysis_date_1, analysis_date_2))
 
         print(f"Asyncio processing {chunk_size} experiment IDs...")
         await asyncio.gather(*tasks)
