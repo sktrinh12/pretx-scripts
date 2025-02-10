@@ -184,13 +184,13 @@ if __name__ == "__main__":
         results.append(data)
 
     for data in results:
-        table_header = f"{'Index':<5} {'Metric':<20} {'With Pre-Processing':<20} {'Without Pre-Processing'}"
+        table_header = f"{'Index':<5} {'Exp ID':<20} {'With Pre-Processing':<20} {'Without Pre-Processing'}"
         separator = "-" * len(table_header)
 
         table_rows = [
             f"{data['index']:<5} {data['exp_id']:<10} {'Match Percentage':<20} {data['match_percentage_cleaned']:.2f}%{' ' * 10}{data['match_percentage_raw']:.2f}%",
             f"{data['index']:<5} {data['exp_id']:<10} {'Is Match (>= 97%)':<20} {data['is_match_cleaned']:<20} {data['is_match_raw']}",
-            f"{data['index']:<5} {data['exp_id']:<10}  {'SciBERT Score':<20} {data['scibert_score_cleaned']:.4f}{' ' * 10}{data['scibert_score_raw']:.4f}",
+            f"{data['index']:<5} {data['exp_id']:<10} {'SciBERT Score':<20} {data['scibert_score_cleaned']:.4f}{' ' * 10}{data['scibert_score_raw']:.4f}",
             f"{data['index']:<5} {data['exp_id']:<10} {'TF-IDF Score':<20} {data['tfidf_score_cleaned']:.4f}{' ' * 10}{data['tfidf_score_raw']:.4f}"
         ]
 
