@@ -1,14 +1,38 @@
 import re
-import argparse
+from os import getenv
 from difflib import unified_diff, SequenceMatcher
 import torch
 from transformers import AutoTokenizer, AutoModel
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+import psycopg2
+import random
+from dotenv import load_dotenv
 
 MODEL_NAME = "allenai/scibert_scivocab_uncased"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModel.from_pretrained(MODEL_NAME)
+load_dotenv(override=True)
+
+def fetch_random_writeups():
+    query = """
+    SELECT exp_id, diff 
+    FROM eln_writeup_comparison 
+    WHERE diff LIKE '%?%' 
+    AND analysis_date = '2025-02-05' 
+    AND diff NOT LIKE '%(? mg, ? mmol,%' 
+    ORDER BY RANDOM() 
+    LIMIT 15;
+    """
+    
+    connection = psycopg2.connect(f"dbname={getenv('DB_NAME')} user={getenv('DB_USER')} password={getenv('DB_PASS')} host={getenv('DB_HOST')}")
+    cursor = connection.cursor()
+    cursor.execute(query)
+    results = cursor.fetchall()
+    cursor.close()
+    connection.close()
+    
+    return results
 
 def get_embedding(text):
     inputs = tokenizer(
