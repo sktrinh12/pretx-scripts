@@ -62,6 +62,8 @@ def tfidf_compare(text1, text2):
         return similarity[0][0]
     except Exception:
         return 0
+
+
 def clean_text(text):
     text = (
         text.replace("\r", "")  # Remove Windows-style line endings
@@ -74,6 +76,24 @@ def clean_text(text):
     
     # Normalize multiple spaces to a single space
     return re.sub(r"\s+", " ", text)
+
+
+def extract_writeups_from_diff(diff_text):
+    lines = diff_text.splitlines()[3:]  # Skip the first 3 lines
+    writeup1_lines = []
+    writeup2_lines = []
+
+    for line in lines:
+        if line.startswith('-'):
+            writeup1_lines.append(line[1:].strip())
+        elif line.startswith('+'):
+            writeup2_lines.append(line[1:].strip())
+
+    writeup1 = " ".join(writeup1_lines)
+    writeup2 = " ".join(writeup2_lines)
+
+    return writeup1, writeup2
+
 
 writeups = [
 ( """[Set up]  To a stirred solution of nitromethane (​3.19 g, ​52.2 mmol)​{{1080:row 2}}_XXXXX_  nitromethane (​3.19 g, ​52.2 mmol)​{{1080:row 2}}_XXXXX_  in  Ammonium hydroxide (22.0 mL, 40.15 mmol) was added Boc-piperidone (​8.0 g, ​40.15 mmol)​{{1080:row 1}}_XXXXX_  . Then the reaction mixture was stirred at 25 °C under N2 atmosphere for 12 hrs.     [Monitoring]  TLC(PE/EA=1/1) showed the reactant 1 was consumed completely, many spots formed.     [Work up]  No work up     [Purification]  No purification     [Result]  TLC(PE/EA=1/1) showed the reactant 1 was consumed completely, many spots formed.The reaction was unsuccessful. The reaction mixture was discared.   """,
@@ -135,11 +155,12 @@ writeups = [
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Compare and clean text for writeups.")
-    print(f'number of writeup samples: {len(writeups)}')
+    writeups = fetch_random_writeups()
+    print(writeups)
     results = []
-    for index, (writeup1, writeup2) in enumerate(writeups, start=1):
-        data = {'index': index}
+    for index, (exp_id, diff_text) in enumerate(writeups, start=1):
+        data = {'index': index, 'exp_id': exp_id}
+        writeup1, writeup2 = extract_writeups_from_diff(diff_text)
         for mode in ['raw', 'cleaned']:
             if mode =='cleaned':
                 data[f'writeup1_{mode}'] = clean_text(writeup1)
@@ -151,15 +172,15 @@ if __name__ == "__main__":
             matcher = SequenceMatcher(None, data[f'writeup1_{mode}'], data[f'writeup2_{mode}'])
             match_percentage = matcher.ratio() * 100
             is_match = match_percentage >= 97
-            
+
             scibert_score = float(scibert_compare(data[f'writeup1_{mode}'], data[f'writeup2_{mode}']))
             tfidf_score = float(tfidf_compare(data[f'writeup1_{mode}'], data[f'writeup2_{mode}']))
-            
+
             data[f'match_percentage_{mode}'] = match_percentage
             data[f'is_match_{mode}'] = "Yes" if is_match else "No"
             data[f'scibert_score_{mode}'] = scibert_score
             data[f'tfidf_score_{mode}'] = tfidf_score
-        
+
         results.append(data)
 
     for data in results:
@@ -167,10 +188,10 @@ if __name__ == "__main__":
         separator = "-" * len(table_header)
 
         table_rows = [
-            f"{data['index']:<5} {'Match Percentage':<20} {data['match_percentage_cleaned']:.2f}%{' ' * 10}{data['match_percentage_raw']:.2f}%",
-            f"{data['index']:<5} {'Is Match (>= 97%)':<20} {data['is_match_cleaned']:<20} {data['is_match_raw']}",
-            f"{data['index']:<5} {'SciBERT Score':<20} {data['scibert_score_cleaned']:.4f}{' ' * 10}{data['scibert_score_raw']:.4f}",
-            f"{data['index']:<5} {'TF-IDF Score':<20} {data['tfidf_score_cleaned']:.4f}{' ' * 10}{data['tfidf_score_raw']:.4f}"
+            f"{data['index']:<5} {data['exp_id']:<10} {'Match Percentage':<20} {data['match_percentage_cleaned']:.2f}%{' ' * 10}{data['match_percentage_raw']:.2f}%",
+            f"{data['index']:<5} {data['exp_id']:<10} {'Is Match (>= 97%)':<20} {data['is_match_cleaned']:<20} {data['is_match_raw']}",
+            f"{data['index']:<5} {data['exp_id']:<10}  {'SciBERT Score':<20} {data['scibert_score_cleaned']:.4f}{' ' * 10}{data['scibert_score_raw']:.4f}",
+            f"{data['index']:<5} {data['exp_id']:<10} {'TF-IDF Score':<20} {data['tfidf_score_cleaned']:.4f}{' ' * 10}{data['tfidf_score_raw']:.4f}"
         ]
 
         print(table_header)
