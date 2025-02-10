@@ -517,7 +517,6 @@ async def main(limit: int, max_size: int, cardinal: int):
                 token_dct,
                 chunk,
                 semaphore,
-                analysis_date,
                 analysis_date_1,
                 analysis_date_2,
             )
