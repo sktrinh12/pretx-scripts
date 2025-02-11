@@ -46,7 +46,6 @@ DS_IDS = {
 }
 BASE_URL = "dotmatics.net/browser/api"
 EXPIRE = 1 * 60 * 60
-MAX_RETRIES = 3
 DB_POOL = None
 DB_CONFIG = {
     "dbname": getenv("DB_NAME"),
@@ -130,7 +129,7 @@ def create_tables(delete=False, cont=True):
         exp_id_list = [row[0] for row in stored_exp_ids]
         print(exp_id_list[:100])
         print(
-            f"first 100 records of {len(exp_id_list)}, from PostgreSQL database fetched..."
+            f"showing up to first 100 records of {len(exp_id_list)}, from PostgreSQL database fetched..."
         )
 
     connection.commit()
@@ -366,7 +365,8 @@ async def process_exp_id(
         token_dct (dict): Dictionary of tokens for authentication.
         exp_id_chunk (list): List of experiment ids as 6-digit numerals.
         semaphore (semphore): The semaphore object that is based on limited concurrent tasks.
-        analysis_date (date): Date analysed.
+        analysis_date_1 (date): First date analysed.
+        analysis_date_2 (date): Second date analysed, as comparator.
     """
 
     async with semaphore:
@@ -502,7 +502,7 @@ async def main(limit: int, max_size: int, cardinal: int):
 
     print(f"{len(rev_exp_id_list)} experiment IDs to process.")
     print()
-    print("showing only first 200 experiment ids fetched...")
+    print("showing up to first 200 experiment ids fetched...")
     print(rev_exp_id_list[:200])
     print()
     input("Press any key to continue...")
