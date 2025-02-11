@@ -118,8 +118,7 @@ def create_tables(delete=False, cont=True):
                 tfidf_score NUMERIC,
                 analysis_date DATE NOT NULL,
                 PRIMARY KEY (exp_id, system_name_1, system_name_2, analysis_date),
-                FOREIGN KEY (exp_id, system_name_1, analysis_date) REFERENCES eln_writeup_api_extract (exp_id, system_name, analysis_date),
-                FOREIGN KEY (exp_id, system_name_2, analysis_date) REFERENCES eln_writeup_api_extract (exp_id, system_name, analysis_date)
+                FOREIGN KEY (exp_id, system_name_1, analysis_date) REFERENCES eln_writeup_api_extract (exp_id, system_name, analysis_date)
             );
         """
         )
@@ -404,7 +403,7 @@ async def process_exp_id(
                 compr_data[sname] = {"writeup": writeup_data}
 
                 await save_writeup_to_db(
-                    exp_id, sname, writeup_data, sdata[sname][exp_id], analysis_date
+                    exp_id, sname, writeup_data, sdata[sname][exp_id], analysis_date_1
                 )
 
             writeup1 = compr_data[SYS_NAMES[0]]["writeup"]
