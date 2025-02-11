@@ -500,7 +500,11 @@ async def main(limit: int, max_size: int, cardinal: int):
     rev_exp_id_list = list(reversed(exp_id_list_api))
     # rev_exp_id_list = [str(record["exp_id"]) for record in exp_id_list]
 
-    print(f"{len(rev_exp_id_list)} experiment IDs to process.")
+    # release from memory for GC
+    del exp_id_list
+    print("release 'exp_id_list' from memory...")
+
+    print(f"{len(rev_exp_id_list)} experiment IDs to process...")
     print()
     print("showing up to first 200 experiment ids fetched...")
     print(rev_exp_id_list[:200])
