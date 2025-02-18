@@ -459,6 +459,7 @@ async def main(limit: int, max_size: int, cardinal: int):
         max_size (int): Max number of connections in the pool
         cardinal (int): Max number of concurrent asyncio tasks and semaphores
     """
+    global exp_id_list 
     await init_db(max_size)
     semaphore = asyncio.Semaphore(cardinal)
     chunk_size = cardinal
