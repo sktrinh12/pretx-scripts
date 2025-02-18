@@ -509,6 +509,10 @@ async def main(limit: int, max_size: int, cardinal: int, cont: bool):
             """
         )
 
+    exp_id_list_psql = [str(record["exp_id"]) for record in exp_id_list_psql]
+    print(exp_id_list_psql[:100])
+    print(len(exp_id_list_psql))
+
     missing_exp_id_list_api_psql = [
         exp_id for exp_id in exp_id_list_api if exp_id not in exp_id_list_psql
     ]
@@ -516,7 +520,8 @@ async def main(limit: int, max_size: int, cardinal: int, cont: bool):
     exp_id_list_api = [
         exp_id for exp_id in exp_id_list_api if exp_id in exp_id_list_psql
     ]
-    if exp_id_list_psql:
+
+    if missing_exp_id_list_api_psql:
         with open('missing_exp_ids', 'w') as f:
             f.write('\n'.join(map(str, missing_exp_id_list_api_psql)))
 
