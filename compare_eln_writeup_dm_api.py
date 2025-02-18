@@ -28,6 +28,7 @@ import asyncpg
 from difflib import unified_diff, SequenceMatcher
 import json
 import torch
+from time import sleep
 from datetime import date, datetime
 from transformers import AutoTokenizer, AutoModel
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -508,7 +509,9 @@ async def main(limit: int, max_size: int, cardinal: int):
     print("showing up to first 200 experiment ids fetched...")
     print(rev_exp_id_list[:200])
     print()
-    input("Press any key to continue...")
+    print("Continuing in 25s ...")
+    sleep(25)
+
     for i in range(0, len(rev_exp_id_list), chunk_size):
         chunk = rev_exp_id_list[i : i + chunk_size]
         print(
