@@ -38,10 +38,10 @@ load_dotenv(override=True)
 DM_USER = getenv("DM_USER")
 DM_PASS = quote(getenv("DM_PASS"))
 DM_PASS_ALT = quote(getenv("DM_PASS_ALT"))
-SYS_NAMES = ["prelude", "prelude-masks"]
+SYS_NAMES = ["prelude-masks2", "prelude-masks"]
 DS_IDS = {
-    "prelude-masks2": {"proj_id": 100000, "exp_ids": 1425, "summary": 1426},
-    "prelude-masks": {"proj_id": 100000, "exp_ids": 1422, "summary": 1423},
+    SYS_NAMES[0]: {"proj_id": 100000, "exp_ids": 1425, "summary": 1426},
+    SYS_NAMES[1]: {"proj_id": 100000, "exp_ids": 1422, "summary": 1423},
 }
 BASE_URL = "dotmatics.net/browser/api"
 EXPIRE = 1 * 60 * 60
