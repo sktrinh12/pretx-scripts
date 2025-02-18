@@ -38,11 +38,10 @@ load_dotenv(override=True)
 DM_USER = getenv("DM_USER")
 DM_PASS = quote(getenv("DM_PASS"))
 DM_PASS_ALT = quote(getenv("DM_PASS_ALT"))
-SYS_NAMES = ["prelude", "prelude-masks", "prelude-prod-sdpo-8251"]
+SYS_NAMES = ["prelude", "prelude-masks"]
 DS_IDS = {
-    "prelude": {"proj_id": 100000, "exp_ids": 1425, "summary": 1426},
+    "prelude-masks2": {"proj_id": 100000, "exp_ids": 1425, "summary": 1426},
     "prelude-masks": {"proj_id": 100000, "exp_ids": 1422, "summary": 1423},
-    "prelude-prod-sdpo-8251": {"proj_id": 98000, "exp_ids": 1403, "summary": 1404},
 }
 BASE_URL = "dotmatics.net/browser/api"
 EXPIRE = 1 * 60 * 60
@@ -467,9 +466,8 @@ async def main(limit: int, max_size: int, cardinal: int):
     analysis_date_1 = date.today()
     analysis_date_2 = datetime.strptime("2025-01-30", "%Y-%m-%d").date()
 
-    # get the prod-sdpo-8251 domain exp ids bc from 2024-AUG
-    # has only subset of exp ids from prod
-    DOMAIN = SYS_NAMES[2]
+    # get the prod-masks2 clone domain exp ids bc DTX just applied bug-fix 2025-02-17
+    DOMAIN = SYS_NAMES[1]
     token_dct = {}
 
     for sname in SYS_NAMES:
