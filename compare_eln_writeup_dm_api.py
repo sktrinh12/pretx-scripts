@@ -450,7 +450,7 @@ async def process_exp_id(
             await asyncio.sleep(0.1)
 
 
-async def main(limit: int, max_size: int, cardinal: int):
+async def main(limit: int, max_size: int, cardinal: int, cont: bool):
     """
     Main function to handle the asynchronous logic for fetching, comparing,
     and saving data.
@@ -483,9 +483,13 @@ async def main(limit: int, max_size: int, cardinal: int):
     headers = {"Authorization": f"Dotmatics {token_dct[DOMAIN]}"}
     print(f"Fetching experiment IDs from: {url}")
     exp_id_list_api = await fetch_get(url, headers)
-    exp_id_list_api = [
-        exp_id for exp_id in exp_id_list_api["ids"] if exp_id not in exp_id_list
-    ]
+    if cont:
+        exp_id_list_api = [
+            exp_id for exp_id in exp_id_list_api["ids"] if exp_id not in exp_id_list
+        ]
+    else:
+        exp_id_list_api = exp_id_list_api["ids"]
+
     # print(exp_id_list_api)
 
     # priority for CRO affinity
@@ -496,11 +500,32 @@ async def main(limit: int, max_size: int, cardinal: int):
     #         from prioritized_experiments
     #         """
     #     )
+    
+    async with DB_POOL.acquire() as conn:
+        exp_id_list_psql = await conn.fetch(
+            """
+            SELECT distinct exp_id
+            from eln_writeup_api_extract where analysis_date = '2025-01-30'
+            """
+        )
+
+    missing_exp_id_list_api_psql = [
+        exp_id for exp_id in exp_id_list_api if exp_id not in exp_id_list_psql
+    ]
+
+    exp_id_list_api = [
+        exp_id for exp_id in exp_id_list_api if exp_id in exp_id_list_psql
+    ]
+    if exp_id_list_psql:
+        with open('missing_exp_ids', 'w') as f:
+            f.write('\n'.join(map(str, missing_exp_id_list_api_psql)))
 
     rev_exp_id_list = list(reversed(exp_id_list_api))
     # rev_exp_id_list = [str(record["exp_id"]) for record in exp_id_list]
 
     # release from memory for GC
+    del missing_exp_id_list_api_psql
+    del exp_id_list_psql
     del exp_id_list
     print("release 'exp_id_list' from memory...")
 
@@ -509,8 +534,8 @@ async def main(limit: int, max_size: int, cardinal: int):
     print("showing up to first 200 experiment ids fetched...")
     print(rev_exp_id_list[:200])
     print()
-    print("Continuing in 25s ...")
-    sleep(25)
+    print("Continuing in 20s ...")
+    sleep(20)
 
     for i in range(0, len(rev_exp_id_list), chunk_size):
         chunk = rev_exp_id_list[i : i + chunk_size]
@@ -578,4 +603,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     create_tables(delete=args.delete, cont=args.continue_flag)
     if not args.delete:
-        asyncio.run(main(args.limit, int(args.max_size), int(args.semaphore)))
+        asyncio.run(main(args.limit, int(args.max_size), int(args.semaphore), bool(args.continue_flag)))
