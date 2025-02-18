@@ -410,7 +410,7 @@ async def process_exp_id(
 
             # for exp_id in exp_id_chunk:
             # writeup1 = await fetch_write_up(exp_id, SYS_NAMES[1], analysis_date_1)
-            writeup2 = await fetch_write_up(exp_id, SYS_NAMES[2], analysis_date_2)
+            writeup2 = await fetch_write_up(exp_id, SYS_NAMES[1], analysis_date_2)
 
             diff = "\n".join(
                 unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
@@ -437,7 +437,7 @@ async def process_exp_id(
             await save_compr_to_db(
                 exp_id,
                 SYS_NAMES[0],
-                SYS_NAMES[2],
+                SYS_NAMES[1],
                 diff,
                 match_percentage,
                 is_match,
