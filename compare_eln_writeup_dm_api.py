@@ -45,7 +45,7 @@ DS_IDS = {
     SYS_NAMES[1]: {"proj_id": 100000, "exp_ids": 1422, "summary": 1423},
 }
 BASE_URL = "dotmatics.net/browser/api"
-EXPIRE = 1 * 60 * 60
+EXPIRE = 12 * 60 * 60
 DB_POOL = None
 DB_CONFIG = {
     "dbname": getenv("DB_NAME"),
@@ -123,7 +123,7 @@ def create_tables(delete=False, cont=True):
         )
     if cont and not delete:
         cursor.execute(
-            "SELECT distinct exp_id from ELN_WRITEUP_API_EXTRACT where analysis_date NOT IN ('2025-01-30', '2025-02-05')"
+            "SELECT distinct exp_id from ELN_WRITEUP_API_EXTRACT WHERE analysis_date >= CURRENT_DATE - INTERVAL '2 days'"
         )
         stored_exp_ids = cursor.fetchall()
         exp_id_list = [row[0] for row in stored_exp_ids]
@@ -510,8 +510,8 @@ async def main(limit: int, max_size: int, cardinal: int, cont: bool):
         )
 
     exp_id_list_psql = [str(record["exp_id"]) for record in exp_id_list_psql]
-    print(exp_id_list_psql[:100])
-    print(len(exp_id_list_psql))
+    # print(exp_id_list_psql[:100])
+    # print(len(exp_id_list_psql))
 
     missing_exp_id_list_api_psql = [
         exp_id for exp_id in exp_id_list_api if exp_id not in exp_id_list_psql
@@ -522,7 +522,8 @@ async def main(limit: int, max_size: int, cardinal: int, cont: bool):
     ]
 
     if missing_exp_id_list_api_psql:
-        with open('missing_exp_ids', 'w') as f:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        with open(f'missing_exp_idsT{timestamp}', 'w') as f:
             f.write('\n'.join(map(str, missing_exp_id_list_api_psql)))
 
     rev_exp_id_list = list(reversed(exp_id_list_api))
@@ -532,6 +533,7 @@ async def main(limit: int, max_size: int, cardinal: int, cont: bool):
     del missing_exp_id_list_api_psql
     del exp_id_list_psql
     del exp_id_list
+    del exp_id_list_api
     print("release 'exp_id_list' from memory...")
 
     print(f"{len(rev_exp_id_list)} experiment IDs to process...")
