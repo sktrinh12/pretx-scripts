@@ -436,14 +436,7 @@ def main():
         "--exp-id",
         help=f"Specify relatively short string of experiment ids comma delimited",
     )
-    parser.add_argument(
-        "-n",
-        "--system_name",
-        choices=DOMAINS.keys(),
-        help=f"Specify the system name. Must be one of: {', '.join(DOMAINS.keys())}",
-    )
     args = parser.parse_args()
-    sys_name = args.system_name
     if any(value == "" or value is None for value in DB_CONFIG.values()):
         raise ValueError(
             "One or more required configurations in DB_CONFIG are missing or empty."
