@@ -8,74 +8,199 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.common.exceptions import TimeoutException, NoSuchElementException
 import traceback
 import psycopg2
-from os import getenv, path, getcwd
+from os import getenv, path, getcwd, pardir
 import argparse
 from datetime import datetime
+from time import sleep
 from dotenv import load_dotenv
-
+import csv
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import logging
+from contextlib import contextmanager
+from ml_modules import scibert_compare, tfidf_compare
+from difflib import unified_diff, SequenceMatcher
+from bs4 import BeautifulSoup
 
 load_dotenv(override=True)
 dm_user = getenv("DM_USER")
 dm_pass = getenv("DM_PASS")
-date_formats = ['%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y']
+date_formats = ["%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"]
+timestamp = datetime.now().strftime("%Y-%m-%d")
+parent_dir = path.abspath(path.join(getcwd(), pardir))
+log_filename = path.join(parent_dir, f"writeup_scrape_{timestamp}.log")
+analysis_date = datetime.today()
 
-def save_to_database(exp_id, created_date, system_name, **kwargs):
-    """
-    Save writeup data to the psql db.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler(log_filename), logging.StreamHandler()],
+)
 
-    Args:
-        exp_id (str): The experiment ID.
-        system_name (str): The system name.
-        created_date (date): The created date
-        **kwargs: Additional tables and writeup data (reactant_table, solvent_table, writeup).
-    """
+
+@contextmanager
+def get_db_connection():
+    """Context manager for database connection."""
+    connection = None
     try:
         connection = psycopg2.connect(**DB_CONFIG)
-        cursor = connection.cursor()
-
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS ELN_WRITEUP_SCRAPPED (
-                exp_id VARCHAR(7) NOT NULL,
-                created_date DATE,
-                system_name VARCHAR(20) NOT NULL,
-                reactants_table TEXT NOT NULL,
-                solvents_table TEXT NOT NULL,
-                products_table TEXT NOT NULL,
-                write_up TEXT NOT NULL,
-                PRIMARY KEY(exp_id, system_name)
-            );
-        """
-        )
-        connection.commit()
-
-        table_columns = ", ".join(
-            [
-                f"{key.lower()}_table"
-                for key in kwargs.keys()
-                if not key.lower().startswith("write")
-            ]
-        ) + ', write_up'
-        table_values_placeholders = ", ".join(["%s"] * len(kwargs))
-        table_values = list(kwargs.values())
-
-        query = f"""
-            INSERT INTO ELN_WRITEUP_SCRAPPED (exp_id, created_date, system_name, {table_columns})
-            VALUES (%s, %s, %s, {table_values_placeholders});
-        """
-        cursor.execute(query, [exp_id, created_date, system_name] + table_values)
-        connection.commit()
-
+        yield connection
     except Exception as e:
-        print(f"Error saving to database: {e}")
+        logging.error(f"Database connection error: {e}")
+        raise
     finally:
-        if cursor:
-            cursor.close()
         if connection:
             connection.close()
 
 
-def scrape_writeup(exp_id, domain):
+def create_table():
+    """
+    Create the ELN_WRITEUP_SCRAPPED table if it doesn't exist.
+    """
+    try:
+        with get_db_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ELN_WRITEUP_SCRAPPED (
+                    exp_id VARCHAR(7) NOT NULL,
+                    created_date DATE,
+                    system_name VARCHAR(20) NOT NULL,
+                    reactants_table TEXT NOT NULL,
+                    solvents_table TEXT NOT NULL,
+                    products_table TEXT NOT NULL,
+                    write_up TEXT NOT NULL,
+                    PRIMARY KEY(exp_id, system_name)
+                );
+                """
+            )
+            connection.commit()
+            logging.info("Table created or already exists.")
+    except Exception as e:
+        logging.error(f"Error creating table: {e}")
+        raise
+
+
+def save_to_database(exp_id, created_date, system_name, **kwargs):
+    """
+    Save writeup data to the PostgreSQL database.
+
+    Args:
+        exp_id (str): The experiment ID.
+        created_date (date): The created date.
+        system_name (str): The system name.
+        **kwargs: Additional tables and writeup data (reactant_table, solvent_table, writeup).
+    """
+    try:
+        with get_db_connection() as connection:
+            cursor = connection.cursor()
+
+            # Prepare the columns and values for the INSERT query
+            table_columns = (
+                ", ".join(
+                    [
+                        f"{key.lower()}_table"
+                        for key in kwargs.keys()
+                        if not key.lower().startswith("write")
+                    ]
+                )
+                + ", write_up"
+            )
+            table_values_placeholders = ", ".join(["%s"] * len(kwargs))
+            table_values = list(kwargs.values())
+
+            # Build and execute the INSERT query
+            query = f"""
+                INSERT INTO ELN_WRITEUP_SCRAPPED (exp_id, created_date, system_name, {table_columns})
+                VALUES (%s, %s, %s, {table_values_placeholders});
+            """
+            cursor.execute(query, [exp_id, created_date, system_name] + table_values)
+            connection.commit()
+            logging.info(f"Data saved for exp_id {exp_id} in system {system_name}.")
+
+    except Exception as e:
+        logging.error(f"Error saving to database: {e}")
+        raise
+
+
+def fetch_write_up(exp_id, system_name):
+    """
+    Fetch the write_up for a given exp_id and system_name from the database.
+
+    Args:
+        exp_id (str): The experiment ID.
+        system_name (str): The system name.
+
+    Returns:
+        str: The write_up text.
+    """
+    try:
+        with get_db_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT write_up
+                FROM ELN_WRITEUP_SCRAPPED
+                WHERE exp_id = %s AND system_name = %s;
+                """,
+                (exp_id, system_name),
+            )
+            result = cursor.fetchone()
+            if result:
+                soup = BeautifulSoup(result[0], "html.parser")
+                raw_text = soup.get_text(separator=" ")
+                return raw_text.strip()
+            else:
+                logging.warning(f"No write_up found for exp_id {exp_id} in system {system_name}.")
+                return ""
+    except Exception as e:
+        logging.error(f"Error fetching write_up: {e}")
+        raise
+
+def compare_and_save_results(exp_id, system_name_1, system_name_2, analysis_date):
+    """
+    Compare write-ups from two systems and save the results to the comparison table.
+
+    Args:
+        exp_id (str): The experiment ID.
+        system_name_1 (str): The first system name.
+        system_name_2 (str): The second system name.
+        analysis_date (date): The analysis date.
+    """
+    try:
+        writeup1 = fetch_write_up(exp_id, system_name_1)
+        writeup2 = fetch_write_up(exp_id, system_name_2)
+
+        if not writeup1 or not writeup2:
+            logging.warning(f"Skipping comparison for exp_id {exp_id} due to missing write-ups.")
+            return
+
+        diff = "\n".join(
+            unified_diff(writeup1.splitlines(), writeup2.splitlines(), lineterm="")
+        )
+        matcher = SequenceMatcher(None, writeup1, writeup2)
+        match_percentage = matcher.ratio() * 100
+        is_match = match_percentage >= 97
+
+        scibert_score = float(scibert_compare(writeup1, writeup2))
+        tfidf_score = float(tfidf_compare(writeup1, writeup2))
+
+        with get_db_connection() as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                INSERT INTO ELN_WRITEUP_COMPARISON (exp_id, system_name_1, system_name_2, diff, match_percentage, is_match, scibert_score, tfidf_score, analysis_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (exp_id, system_name_1, system_name_2, diff, match_percentage, is_match, scibert_score, tfidf_score, analysis_date),
+            )
+            connection.commit()
+            logging.info(f"Comparison results saved for exp_id {exp_id} between {system_name_1} and {system_name_2}.")
+    except Exception as e:
+        logging.error(f"Error comparing and saving results: {e}")
+        raise
+
+
+def scrape_writeup(exp_id, domain, index):
     """
     Scrape html text from DM website.
 
@@ -88,6 +213,7 @@ def scrape_writeup(exp_id, domain):
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    global analysis_date
 
     service = Service(ChromeDriverManager().install())
     service.start_timeout = 30
@@ -95,7 +221,7 @@ def scrape_writeup(exp_id, domain):
 
     try:
         url = base_url_template.format(domain)
-        print(f"Navigating to URL: {url}")
+        logging.info(f"Navigating to URL: {url}")
         driver.get(url)
 
         username_field = WebDriverWait(driver, 10).until(
@@ -129,12 +255,12 @@ def scrape_writeup(exp_id, domain):
         password_field.send_keys(dm_pass)
         login_button.click()
 
-        print("Login successful!")
+        logging.info("Login successful!")
 
         url = url + path_url_template.format(exp_id)
         driver.get(url)
 
-        print(f"Current URL: {driver.current_url}")
+        logging.info(f"Current URL: {driver.current_url}")
 
         # exp_input_xpath = "//input[@id='mainSearch']"
         # exp_input_xpath = "/html/body/header/div[3]/ul/li[3]/div[1]/input"
@@ -173,7 +299,7 @@ def scrape_writeup(exp_id, domain):
 
         try:
             driver.switch_to.frame(iframe_1)
-            print("Switched to samplenotebook iframe")
+            logging.info("Switched to samplenotebook iframe")
 
             textarea_div = WebDriverWait(driver, 12).until(
                 EC.presence_of_element_located(
@@ -184,7 +310,7 @@ def scrape_writeup(exp_id, domain):
             #     f.write(driver.page_source)
 
         except TimeoutException:
-            print(
+            logging.error(
                 f"Timeout waiting for the content inside the iframe; exp id: {exp_id}."
             )
             textarea_div = None
@@ -209,9 +335,9 @@ def scrape_writeup(exp_id, domain):
                 date_tbody_div = date_table.find_element(By.XPATH, "./tbody//div")
                 date_text = date_tbody_div.text.strip()
             except Exception:
-                pass 
+                pass
 
-        print(f'date: {date_text}')
+        logging.info(f"date: {date_text}")
         date_value = None
         for date_format in date_formats:
             try:
@@ -219,7 +345,7 @@ def scrape_writeup(exp_id, domain):
                 break
             except ValueError:
                 continue
-        
+
         # chemical tables
         table_dct = {"Reactants": None, "Solvents": None, "Products": None}
         try:
@@ -235,7 +361,7 @@ def scrape_writeup(exp_id, domain):
                     By.TAG_NAME, "table"
                 ).get_attribute("outerHTML")
         except NoSuchElementException as e:
-            print(f"Error extracting table element for {exp_id} - {label}: {e}")
+            logging.error(f"Error extracting table element for {exp_id} - {label}: {e}")
             table_dct[label] = None
 
         # writeup textarea
@@ -245,23 +371,28 @@ def scrape_writeup(exp_id, domain):
             )
         except NoSuchElementException:
             try:
-                writeup_span = textarea_div.find_element(By.XPATH, ".//*[@data-type='writeup']")
+                writeup_span = textarea_div.find_element(
+                    By.XPATH, ".//*[@data-type='writeup']"
+                )
             except NoSuchElementException as e:
                 write_up = None
-                print(f"Error extracting writeup element {exp_id}: {e}")
+                logging.error(f"Error extracting writeup element {exp_id}: {e}")
             else:
                 all_tags = writeup_span.find_elements(By.XPATH, ".//*")
-                write_up = " ".join([tag.get_attribute("outerHTML") for tag in all_tags])
+                write_up = " ".join(
+                    [tag.get_attribute("outerHTML") for tag in all_tags]
+                )
         else:
             all_tags = writeup_span.find_elements(By.XPATH, ".//*")
             write_up = " ".join([tag.get_attribute("outerHTML") for tag in all_tags])
 
-        print("=" * 42)
+        logging.info(f"{index} [{exp_id}] {'=' * 42}")
         save_to_database(exp_id, date_value, domain, **table_dct, write_up=write_up)
 
+
     except Exception as e:
-        print("Comprehensive Error:")
-        print(traceback.format_exc())
+        logging.error("Comprehensive Error:")
+        logging.error(traceback.format_exc())
         return None
     finally:
         driver.quit()
@@ -275,18 +406,19 @@ DB_CONFIG = {
     "port": getenv("DB_PORT"),
 }
 
-DOMAINS = {"dev": "prelude-dev", "up6": "prelude-upgrade6", "prod": "prelude", "clone": "prelude-clone"}
-file_path_template = "exp_ids_eln_writeup_{0}.txt"
+DOMAINS = {
+    "dev": "prelude-dev",
+    "up6": "prelude-upgrade6",
+    "prod": "prelude",
+    "clone1": "prelude-masks",
+    "clone2": "prelude-masks2",
+}
+
+file_name = "Affinity_match_drop_19-FEB.csv"
 base_url_template = "https://{0}.dotmatics.net/browser"
 path_url_template = (
     "/testmanager/experiment.jsp?experiment_id={0}&action=edit&tab=notebook"
 )
-proj_names = [
-    "CRO_Affinity_Wilmington",
-    "CRO_Affinity_Wuhan",
-    "CRO_Viva_ChemELN",
-    "ChemELN",
-]
 
 
 def main():
@@ -294,50 +426,61 @@ def main():
         description="Save ELN write-up to database based on system name"
     )
     parser.add_argument(
-        "-n",
-        "--system_name",
-        required=True,
-        choices=DOMAINS.keys(),
-        help=f"Specify the system name. Must be one of: {', '.join(DOMAINS.keys())}",
+        "-c",
+        "--create",
+        action="store_true",
+        help=f"Create the fresh new table in PSQL, defaults to false",
     )
     parser.add_argument(
         "-e",
         "--exp-id",
         help=f"Specify relatively short string of experiment ids comma delimited",
     )
+    parser.add_argument(
+        "-n",
+        "--system_name",
+        choices=DOMAINS.keys(),
+        help=f"Specify the system name. Must be one of: {', '.join(DOMAINS.keys())}",
+    )
     args = parser.parse_args()
     sys_name = args.system_name
-
     if any(value == "" or value is None for value in DB_CONFIG.values()):
         raise ValueError(
             "One or more required configurations in DB_CONFIG are missing or empty."
         )
 
     if not dm_user or not dm_pass:
-        raise ValueError('DM user and/or pass not set')
+        raise ValueError("DM user and/or pass not set")
+
+    if args.create:
+        create_table()
 
     base_path = path.join(getcwd(), "exp_ids")
     exp_ids = []
+    clone_domains = [DOMAINS["clone1"], DOMAINS["clone2"]]
 
     if args.exp_id:
         arg_exp_ids = args.exp_id.strip()
         exp_ids = [eid.strip() for eid in arg_exp_ids.split(",") if eid.strip()]
     else:
-        for cro in proj_names:
-            print(f"cro: {cro}")
-            file_name = file_path_template.format(f"{sys_name}_{cro}")
-            print(f"file_name: {file_name}")
-            with open(path.join(base_path, file_name), "r") as file:
-                for line in file:
-                    exp_ids.extend(line.strip().split(","))
+        with open(path.join(base_path, file_name), "r") as file:
+            reader = csv.reader(file)
+            next(reader)
+            for row in reader:
+                exp_ids.append(row[0])
 
-    print(exp_ids)
-    domain = DOMAINS[sys_name]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        for i, exp_id in enumerate(exp_ids, start=1):
+            futures = [executor.submit(scrape_writeup, exp_id, domain, i) for domain in clone_domains]
 
-    for exp_id in exp_ids:
-        scrape_writeup(exp_id, domain)
+            for future in as_completed(futures):
+               try:
+                   future.result()  # Ensure the task completed successfully
+               except Exception as e:
+                   logging.error(f"Error during scraping: {e}")
 
-
+            # compare prelude-masks2 vs prelude-masks
+            compare_and_save_results(exp_id, clone_domains[1], clone_domains[0], analysis_date)
 
 if __name__ == "__main__":
     main()
