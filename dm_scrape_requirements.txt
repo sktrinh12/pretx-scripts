@@ -2,3 +2,7 @@ selenium
 webdriver-manager
 psycopg2-binary
 python-dotenv
+bs4
+transformers
+scikit-learn
+torch --index-url https://download.pytorch.org/whl/cpu
