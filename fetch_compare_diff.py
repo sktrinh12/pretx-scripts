@@ -38,7 +38,9 @@ FROM
     ELN_WRITEUP_COMPARISON c
 INNER JOIN
     ELN_WRITEUP_API_EXTRACT e
-    ON c.exp_id = e.exp_id AND c.system_name_1 = e.system_name
+    ON c.exp_id = e.exp_id 
+    AND c.system_name_1 = e.system_name
+    AND c.analysis_date = e.analysis_date
 WHERE e.exp_id = ANY(%s)
 GROUP BY
     e.exp_id,
